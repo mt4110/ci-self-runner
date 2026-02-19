@@ -49,17 +49,12 @@ jobs:
               }
             }
 
-      - name: Notify Discord (verify-lite failure)
-        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
-        uses: tsickert/discord-webhook@b217a69502f52803de774ded2b1ab7c282e99645
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          content: |
-            ERROR: verify-lite failed
-            repo=${{ github.repository }}
-            ref=${{ github.ref_name }}
-            sha=${{ github.sha }}
-            run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Notify Discord (CI Alerts)
+        if: always()
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: go run ./cmd/notify_discord --status out/verify-lite.status --title "verify-lite" --webhook-env DISCORD_WEBHOOK_URL --min-level ERROR
 
   verify-full-dryrun:
     if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
@@ -113,14 +108,9 @@ jobs:
               }
             }
 
-      - name: Notify Discord (verify-full failure)
-        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
-        uses: tsickert/discord-webhook@b217a69502f52803de774ded2b1ab7c282e99645
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          content: |
-            ERROR: verify-full-dryrun failed
-            repo=${{ github.repository }}
-            ref=${{ github.ref_name }}
-            sha=${{ github.sha }}
-            run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Notify Discord (CI Alerts)
+        if: always()
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: go run ./cmd/notify_discord --status out/verify-full.status --title "verify-full-dryrun" --webhook-env DISCORD_WEBHOOK_URL --min-level ERROR

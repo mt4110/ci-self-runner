@@ -28,10 +28,13 @@ for workflow in .github/workflows/*.yml
     continue
 
   for each uses: line
-    if action ref is not pinned to commit SHA
-      print("ERROR: unpinned action ref")
+    if external action is required and ref is not pinned to commit SHA
+      print("ERROR: unpinned third-party action ref")
       STOP = true
       continue
+
+  if Discord notify can be done by internal Go command
+    prefer internal command (avoid third-party action)
 
 if STOP
   print("SKIP: hardening apply reason=preflight failed")
@@ -52,6 +55,15 @@ catch e
   STOP = true
 
 try
+  enforce cache/artifact poisoning controls
+  - cache keys must be scoped (branch/SHA)
+  - artifacts are evidence only (never execute)
+  print("OK: cache_artifact_controls")
+catch e
+  print("ERROR: cache_artifact_controls " + e)
+  STOP = true
+
+try
   define network posture (allowlist or monitor)
   print("OK: network posture")
 catch e
@@ -67,3 +79,4 @@ return normally
 - workflow が SHA pin + self-hosted guard を満たす
 - `verify-lite` が workflow policy scan を実行する
 - README と RUNBOOK に single-owner と緊急停止を明記
+- cache/artifact poisoning 対策（実行禁止・キー分離）が文書化される

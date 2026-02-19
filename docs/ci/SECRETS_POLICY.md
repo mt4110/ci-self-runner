@@ -29,3 +29,4 @@
 
 - Webhook URL を README / docs / Issue / PR コメントに直接貼る
 - CIログに Secret の生値を表示する
+- `out/logs/` や `out/reviewpack/`（bundle含む）に Secret 生値を残す

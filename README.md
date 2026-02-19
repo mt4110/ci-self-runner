@@ -72,7 +72,7 @@ mise x -- go run ./cmd/review-pack --profile optional
 
 # 5) Discord通知のdry-run（Webhook送信なし）
 DISCORD_WEBHOOK_URL='https://example.invalid/webhook' mise x -- \
-  go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local"
+  go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local" --min-level ERROR
 ```
 
 ## 実行フロー（推奨）
@@ -131,6 +131,9 @@ go run ./cmd/ci_orch bundle-make
 
 ## Discord通知（ローカル確認）
 
+- 通知は外部Actionを使わず `cmd/notify_discord`（Go）で送信
+- 既定は `--min-level ERROR`（ERROR時のみ送信）
+
 Secret設定（GitHub Actions）:
 
 ```bash
@@ -146,8 +149,13 @@ gh variable set SELF_HOSTED_OWNER -b "$(gh repo view --json owner --jq .owner.lo
 dry-run（Webhook送信せずpayload確認）:
 
 ```bash
-go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local"
+go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local" --min-level ERROR
 ```
+
+将来拡張（任意）:
+
+- 基本はテキスト通知（run URL中心）
+- 将来ログ添付を行う場合は、秘匿情報マスクとサイズ制限を先に定義してから有効化
 
 ## レビューパック（ChatGPT / Gemini）
 
