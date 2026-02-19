@@ -5,6 +5,30 @@
 GitHub を「計算機」ではなく「公証台帳」に寄せる運用キットです。  
 検証の主処理は Mac mini（self-hosted + colima + docker）で実行し、PRは最後に作成します。
 
+## Scope（重要）
+
+- このリポジトリは **個人運用（single-owner）専用** です
+- self-hosted runner は **自分のリポジトリ/自分の変更** に限定して使います
+- 外部コラボ・外部PR・fork PR の実行用途は想定しません
+- 上記を外れて運用する場合は、`docs/ci/SECURITY_HARDENING_TASK.md` を先に満たしてください
+- GitHub Actions の self-hosted 実行は `SELF_HOSTED_OWNER` 変数一致時のみ有効です
+
+## 初学者向け: 安全に始める3ステップ
+
+1. GitHubの変数/シークレットを先に設定する（これをしないと self-hosted job は動かない）  
+2. ローカルで `verify-lite` -> `verify-full --dry-run` の順に実行する  
+3. 問題が出たら `out/verify-lite.status` / `out/verify-full.status` の `ERROR:` 行から確認する
+
+最初に1回だけ実行:
+
+```bash
+# 変数（owner名）
+gh variable set SELF_HOSTED_OWNER -b "$(gh repo view --json owner --jq .owner.login)" -R <owner/repo>
+
+# 失敗通知（任意）
+printf '%s' '<paste-discord-webhook-url-here>' | gh secret set DISCORD_WEBHOOK_URL -R <owner/repo>
+```
+
 ## system architecture flow
 
 ![system architecture](docs/assets/systemArchitecture.png)  
@@ -20,6 +44,8 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 - `docs/ci/DISCORD_NOTIFICATIONS.md`
 - `docs/ci/GARBAGE_COLLECTION.md`
 - `docs/ci/RUNBOOK.md`
+- `docs/ci/SECURITY_HARDENING_PLAN.md`
+- `docs/ci/SECURITY_HARDENING_TASK.md`
 
 ## 前提セットアップ（初回）
 
@@ -46,7 +72,7 @@ mise x -- go run ./cmd/review-pack --profile optional
 
 # 5) Discord通知のdry-run（Webhook送信なし）
 DISCORD_WEBHOOK_URL='https://example.invalid/webhook' mise x -- \
-  go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local"
+  go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local" --min-level ERROR
 ```
 
 ## 実行フロー（推奨）
@@ -78,8 +104,8 @@ go run ./cmd/remote_verify --mode local
 ```bash
 go run ./cmd/remote_verify \
   --mode remote \
-  --remote-host macmini \
-  --remote-repo /Users/xxxxxx/dev/ci-self-runner
+  --remote-host <ssh-host-alias> \
+  --remote-repo <remote-repo-path>
 ```
 
 回収される生成物:
@@ -105,17 +131,31 @@ go run ./cmd/ci_orch bundle-make
 
 ## Discord通知（ローカル確認）
 
+- 通知は外部Actionを使わず `cmd/notify_discord`（Go）で送信
+- 既定は `--min-level ERROR`（ERROR時のみ送信）
+
 Secret設定（GitHub Actions）:
 
 ```bash
 printf '%s' '<paste-discord-webhook-url-here>' | gh secret set DISCORD_WEBHOOK_URL -R <owner/repo>
 ```
 
+ownerガード変数（必須）:
+
+```bash
+gh variable set SELF_HOSTED_OWNER -b "$(gh repo view --json owner --jq .owner.login)" -R <owner/repo>
+```
+
 dry-run（Webhook送信せずpayload確認）:
 
 ```bash
-go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local"
+go run ./cmd/notify_discord --dry-run --status out/verify-full.status --title "verify-full local" --min-level ERROR
 ```
+
+将来拡張（任意）:
+
+- 基本はテキスト通知（run URL中心）
+- 将来ログ添付を行う場合は、秘匿情報マスクとサイズ制限を先に定義してから有効化
 
 ## レビューパック（ChatGPT / Gemini）
 

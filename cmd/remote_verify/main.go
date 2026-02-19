@@ -96,14 +96,18 @@ func parseConfig() (config, bool) {
 		fmt.Printf("ERROR: step=config reason=getwd_failed err=%v\n", err)
 		return config{}, false
 	}
+	defaultMode := envOr("REMOTE_VERIFY_MODE", "remote")
+	defaultHost := envOr("REMOTE_HOST", "macmini")
+	defaultRemoteRepo := envOr("REMOTE_REPO", cwd)
+	defaultOutSubdir := envOr("REMOTE_OUT_SUBDIR", "out/remote")
 	cfg := config{}
-	flag.StringVar(&cfg.mode, "mode", "remote", "mode: local or remote")
+	flag.StringVar(&cfg.mode, "mode", defaultMode, "mode: local or remote")
 	flag.StringVar(&cfg.repo, "repo", cwd, "local repository path")
 	flag.StringVar(&cfg.workflow, "workflow", "verify.yml", "GitHub Actions workflow file name")
 	flag.IntVar(&cfg.runLimit, "run-limit", 30, "gh run list search limit")
-	flag.StringVar(&cfg.remoteHost, "remote-host", "macmini", "ssh host alias")
-	flag.StringVar(&cfg.remoteRepo, "remote-repo", "/Users/takemuramasaki/dev/ci-self-runner", "remote repository path")
-	flag.StringVar(&cfg.remoteOutSubdir, "remote-out-subdir", "out/remote", "local output subdir for fetched artifacts")
+	flag.StringVar(&cfg.remoteHost, "remote-host", defaultHost, "ssh host alias")
+	flag.StringVar(&cfg.remoteRepo, "remote-repo", defaultRemoteRepo, "remote repository path")
+	flag.StringVar(&cfg.remoteOutSubdir, "remote-out-subdir", defaultOutSubdir, "local output subdir for fetched artifacts")
 	flag.BoolVar(&cfg.verifyDryRun, "verify-dry-run", true, "set VERIFY_DRY_RUN=1")
 	flag.BoolVar(&cfg.verifyGHASync, "verify-gha-sync", true, "set VERIFY_GHA_SYNC=1")
 	flag.Parse()
@@ -263,4 +267,12 @@ func boolAs01(v bool) string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func envOr(key, fallback string) string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	return raw
 }

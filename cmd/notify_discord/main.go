@@ -15,6 +15,8 @@ type config struct {
 	statusPath string
 	title      string
 	dryRun     bool
+	webhookEnv string
+	minLevel   string
 	webhookURL string
 }
 
@@ -36,13 +38,17 @@ func main() {
 
 	cfg := parseConfig()
 	if cfg.webhookURL == "" {
-		fmt.Println("SKIP: discord webhook not set")
+		fmt.Printf("ERROR: notify_discord webhook_missing env=%s\n", cfg.webhookEnv)
 		return
 	}
 
 	summary, err := parseStatusFile(cfg.statusPath)
 	if err != nil {
 		fmt.Printf("ERROR: notify_discord parse_status err=%s\n", err.Error())
+		return
+	}
+	if !shouldNotify(summary.level, cfg.minLevel) {
+		fmt.Printf("SKIP: notify_discord level=%s min=%s\n", summary.level, cfg.minLevel)
 		return
 	}
 	content := buildContent(cfg.title, summary)
@@ -59,6 +65,7 @@ func main() {
 		return
 	}
 	fmt.Println("OK: notify_discord sent")
+	fmt.Println("OK: notify_discord completed")
 }
 
 func parseConfig() config {
@@ -66,8 +73,15 @@ func parseConfig() config {
 	flag.StringVar(&cfg.statusPath, "status", "out/verify-full.status", "status file path")
 	flag.StringVar(&cfg.title, "title", "verify-full", "notification title")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "print payload only")
+	flag.StringVar(&cfg.webhookEnv, "webhook-env", "DISCORD_WEBHOOK_URL", "webhook environment variable name")
+	flag.StringVar(&cfg.minLevel, "min-level", "ERROR", "minimum level to notify: OK|SKIP|ERROR")
 	flag.Parse()
-	cfg.webhookURL = strings.TrimSpace(os.Getenv("DISCORD_WEBHOOK_URL"))
+	cfg.webhookEnv = strings.TrimSpace(cfg.webhookEnv)
+	if cfg.webhookEnv == "" {
+		cfg.webhookEnv = "DISCORD_WEBHOOK_URL"
+	}
+	cfg.minLevel = normalizeLevel(cfg.minLevel)
+	cfg.webhookURL = strings.TrimSpace(os.Getenv(cfg.webhookEnv))
 	return cfg
 }
 
@@ -197,4 +211,32 @@ func sendDiscord(webhookURL, content string) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func shouldNotify(level, minLevel string) bool {
+	return levelRank(normalizeLevel(level)) >= levelRank(normalizeLevel(minLevel))
+}
+
+func levelRank(level string) int {
+	switch normalizeLevel(level) {
+	case "OK":
+		return 1
+	case "SKIP":
+		return 2
+	case "ERROR":
+		return 3
+	default:
+		return 0
+	}
+}
+
+func normalizeLevel(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "OK":
+		return "OK"
+	case "SKIP":
+		return "SKIP"
+	default:
+		return "ERROR"
+	}
 }

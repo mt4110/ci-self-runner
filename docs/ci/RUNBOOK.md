@@ -56,6 +56,18 @@ mkdir -p /Users/ci/ci-root/runner && cd /Users/ci/ci-root/runner
 ## 外部PR防止（セキュリティ）
 
 - self-hosted runner で外部PRを実行しない（fork PRは拒否）
+- 本リポは single-owner 前提で運用する（外部コラボ用途に拡張しない）
+- Repository Variables に `SELF_HOSTED_OWNER=<your-owner>` を設定し、workflow側で owner 一致を必須化する
+
+## 緊急停止（止血）
+
+インシデント疑い時は、原因調査より先に runner を停止する。
+
+1. GitHub UI で runner を `Offline/Disable` にする
+2. Mac mini 側で runner サービスを停止する
+3. Discord/GitHub token をローテーションする
+4. `docs/ci/HOST_CHANGELOG_TEMPLATE.md` に時刻と対応内容を残す
+5. 復旧は「原因特定 -> 設定修正 -> runner再登録」の順で行う
 
 ## ChatGPT共有用レビューパック（期限なし）
 
