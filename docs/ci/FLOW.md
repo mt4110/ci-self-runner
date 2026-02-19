@@ -37,6 +37,7 @@
   - 通常: `VERIFY_DRY_RUN=0 VERIFY_GHA_SYNC=0`
   - dry-run: `VERIFY_DRY_RUN=1`
   - GitHub Actions同期: `VERIFY_GHA_SYNC=1`（`GITHUB_*` 環境変数を status に記録）
+- ownerガード: workflow変数 `SELF_HOSTED_OWNER` と `github.repository_owner` が一致した場合のみ self-hosted job を実行
 
 ### 標準 docker run（例）
 

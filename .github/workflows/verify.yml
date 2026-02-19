@@ -62,7 +62,7 @@ jobs:
             run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
   verify-full-dryrun:
-    if: ${{ github.repository_owner == 'mt4110' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
     needs: verify-lite
     runs-on:
       - self-hosted

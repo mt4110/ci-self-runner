@@ -57,6 +57,7 @@ mkdir -p /Users/ci/ci-root/runner && cd /Users/ci/ci-root/runner
 
 - self-hosted runner で外部PRを実行しない（fork PRは拒否）
 - 本リポは single-owner 前提で運用する（外部コラボ用途に拡張しない）
+- Repository Variables に `SELF_HOSTED_OWNER=<your-owner>` を設定し、workflow側で owner 一致を必須化する
 
 ## 緊急停止（止血）
 
