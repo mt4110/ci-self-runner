@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +66,9 @@ func run(cfg config) error {
 	defer cancel()
 
 	if err := runSecretPatternScan(); err != nil {
+		return err
+	}
+	if err := runWorkflowPolicyScan(); err != nil {
 		return err
 	}
 	if err := runGoOfficialChecks(ctx); err != nil {
@@ -161,6 +165,80 @@ func runSecretPatternScan() error {
 		return fmt.Errorf("secret scan failed: %w", err)
 	}
 	fmt.Println("OK: verify-lite secret_scan done")
+	return nil
+}
+
+func runWorkflowPolicyScan() error {
+	fmt.Println("OK: verify-lite workflow_policy_scan start")
+	root := filepath.Join(".github", "workflows")
+	info, err := os.Stat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("SKIP: verify-lite workflow_policy_scan reason=missing_.github/workflows")
+			return nil
+		}
+		return fmt.Errorf("workflow policy scan stat failed: %w", err)
+	}
+	if !info.IsDir() {
+		return errors.New(".github/workflows is not a directory")
+	}
+
+	usesRefPattern := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	var violations []string
+
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".yml") && !strings.HasSuffix(d.Name(), ".yaml") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			violations = append(violations, fmt.Sprintf("%s: read_failed", path))
+			return nil
+		}
+		text := string(content)
+		if strings.Contains(text, "pull_request_target:") {
+			violations = append(violations, fmt.Sprintf("%s: forbidden pull_request_target", path))
+		}
+
+		lines := strings.Split(text, "\n")
+		for idx, line := range lines {
+			trim := strings.TrimSpace(line)
+			if !strings.HasPrefix(trim, "uses:") {
+				continue
+			}
+			ref := strings.TrimSpace(strings.TrimPrefix(trim, "uses:"))
+			ref = strings.Trim(ref, `"'`)
+			if ref == "" {
+				violations = append(violations, fmt.Sprintf("%s:%d empty uses ref", path, idx+1))
+				continue
+			}
+			if strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "docker://") {
+				continue
+			}
+			parts := strings.Split(ref, "@")
+			if len(parts) != 2 {
+				violations = append(violations, fmt.Sprintf("%s:%d unpinned uses (%s)", path, idx+1, ref))
+				continue
+			}
+			if !usesRefPattern.MatchString(parts[1]) {
+				violations = append(violations, fmt.Sprintf("%s:%d non-SHA uses (%s)", path, idx+1, ref))
+			}
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return fmt.Errorf("workflow policy scan failed: %w", walkErr)
+	}
+	if len(violations) > 0 {
+		return fmt.Errorf("workflow policy violations: %s", strings.Join(violations, "; "))
+	}
+	fmt.Println("OK: verify-lite workflow_policy_scan done")
 	return nil
 }
 

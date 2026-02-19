@@ -5,6 +5,13 @@
 GitHub を「計算機」ではなく「公証台帳」に寄せる運用キットです。  
 検証の主処理は Mac mini（self-hosted + colima + docker）で実行し、PRは最後に作成します。
 
+## Scope（重要）
+
+- このリポジトリは **個人運用（single-owner）専用** です
+- self-hosted runner は **自分のリポジトリ/自分の変更** に限定して使います
+- 外部コラボ・外部PR・fork PR の実行用途は想定しません
+- 上記を外れて運用する場合は、`docs/ci/SECURITY_HARDENING_TASK.md` を先に満たしてください
+
 ## system architecture flow
 
 ![system architecture](docs/assets/systemArchitecture.png)  
@@ -20,6 +27,8 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 - `docs/ci/DISCORD_NOTIFICATIONS.md`
 - `docs/ci/GARBAGE_COLLECTION.md`
 - `docs/ci/RUNBOOK.md`
+- `docs/ci/SECURITY_HARDENING_PLAN.md`
+- `docs/ci/SECURITY_HARDENING_TASK.md`
 
 ## 前提セットアップ（初回）
 
