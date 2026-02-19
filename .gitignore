@@ -1,0 +1,35 @@
+# OS
+.DS_Store
+
+# local work dirs (runtime artifacts; do not publish)
+.local/
+tmp/
+out/
+out/gha-artifacts/
+out/remote/
+evidence/
+cache/
+
+# editor
+.vscode/
+.idea/
+.local/out/
+
+# archives
+*.tar.gz
+*.tgz
+*.zip
+*.z9
+*.tar
+
+# logs
+*.log
+
+# build
+dist/
+bin/
+target/
+node_modules/
+
+# go
+**/*.test

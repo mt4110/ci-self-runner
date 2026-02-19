@@ -1,0 +1,3 @@
+#最新のlatest versionを維持する運用
+[tools]
+go = "1.25.6"

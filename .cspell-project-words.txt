@@ -1,0 +1,17 @@
+# Project-specific words for VSCode cspell quick fix.
+# Add new accepted words here.
+clippy
+codex
+colima
+dryrun
+gha
+gofmt
+ldflags
+quickfix
+runbook
+selfhosted
+timebox
+trimpath
+verifyfull
+verifylite
+virtiofs

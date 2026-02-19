@@ -1,0 +1,126 @@
+name: verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-lite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify Lite
+        run: go run ./cmd/verify-lite
+
+      - name: Append Verify Lite Status To Job Summary
+        if: always()
+        run: |
+          echo "## verify-lite.status" >> "$GITHUB_STEP_SUMMARY"
+          cat out/verify-lite.status >> "$GITHUB_STEP_SUMMARY" || echo "(missing: out/verify-lite.status)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Evaluate Verify Lite Status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'out/verify-lite.status';
+            if (!fs.existsSync(path)) {
+              core.setFailed('verify-lite.status missing');
+            } else {
+              const content = fs.readFileSync(path, 'utf8');
+              if (content.includes('ERROR:') || content.includes('status=ERROR')) {
+                core.setFailed('verify-lite reported ERROR');
+              }
+            }
+
+      - name: Notify Discord (verify-lite failure)
+        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
+        uses: tsickert/discord-webhook-action@v7.0.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          content: |
+            ERROR: verify-lite failed
+            repo=${{ github.repository }}
+            ref=${{ github.ref_name }}
+            sha=${{ github.sha }}
+            run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  verify-full-dryrun:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+    needs: verify-lite
+    runs-on:
+      - self-hosted
+      - mac-mini
+      - colima
+      - verify-full
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Full (Dry-Run + GHA Sync)
+        env:
+          VERIFY_DRY_RUN: "1"
+          VERIFY_GHA_SYNC: "1"
+          GITHUB_ACTIONS: "true"
+        run: ops/ci/run_verify_full.sh
+
+      - name: Append Verify Full Status To Job Summary
+        if: always()
+        run: |
+          echo "## verify-full.status" >> "$GITHUB_STEP_SUMMARY"
+          cat out/verify-full.status >> "$GITHUB_STEP_SUMMARY" || echo "(missing: out/verify-full.status)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Verify Full Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-full-dryrun-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            out/verify-full.status
+            out/logs/**
+
+      - name: Evaluate Verify Full Status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'out/verify-full.status';
+            if (!fs.existsSync(path)) {
+              core.setFailed('verify-full.status missing');
+            } else {
+              const content = fs.readFileSync(path, 'utf8');
+              if (content.includes('ERROR:') || content.includes('status=ERROR')) {
+                core.setFailed('verify-full reported ERROR');
+              }
+            }
+
+      - name: Notify Discord (verify-full failure)
+        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
+        uses: tsickert/discord-webhook-action@v7.0.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          content: |
+            ERROR: verify-full-dryrun failed
+            repo=${{ github.repository }}
+            ref=${{ github.ref_name }}
+            sha=${{ github.sha }}
+            run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
