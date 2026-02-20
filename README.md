@@ -223,3 +223,5 @@ mise x -- go run ./cmd/verify-lite
 REPO_DIR='.' OUT_DIR='out' CACHE_DIR='cache' mise x -- go run ./cmd/verify-full --dry-run
 mise x -- go run ./cmd/review-pack --profile core
 ```
+
+<!-- prove gha e2e -->
