@@ -18,6 +18,9 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 詳細: `docs/ci/QUICKSTART.md`
 
 ```bash
+# 0) 再起動直後は docker runtime を復帰
+colima status || colima start
+
 # 1) Runner セットアップ（初回のみ・冪等）
 go run ./cmd/runner_setup --apply
 
@@ -69,6 +72,26 @@ gh run watch "$RUN_ID" -R <owner/repo> --exit-status
 ```
 
 複数リポジトリ運用時は毎回 `-R <owner/repo>` を変えるだけです。
+
+注意:
+
+- `gh workflow run verify.yml ...` は、対象リポジトリに `.github/workflows/verify.yml` が存在しないと 404 になります。
+- 先に対象リポジトリへ workflow を作成してコミットしてください。
+
+workflow を1コマンドで生成（`ci-self-runner` リポジトリから実行）:
+
+```bash
+bash ops/ci/scaffold_verify_workflow.sh --repo ~/dev/maakie-brainlab --apply
+```
+
+生成後は対象リポジトリでコミット:
+
+```bash
+cd ~/dev/maakie-brainlab
+git add .github/workflows/verify.yml .gitignore
+git commit -m "ci: add self-hosted verify workflow"
+git push
+```
 
 ## system architecture flow
 
@@ -144,6 +167,7 @@ DISCORD_WEBHOOK_URL='https://example.invalid/webhook' mise x -- \
 まず状態確認:
 
 ```bash
+ssh <mac-mini-host> 'colima status || colima start'
 gh api repos/<owner/repo>/actions/runners --jq '.runners[] | {name,status,busy}'
 ```
 
