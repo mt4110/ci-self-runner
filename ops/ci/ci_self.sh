@@ -21,6 +21,7 @@ Usage:
   ci-self <command> [options]
 
 Commands:
+  up         One-command local register + run-focus
   register   One-command runner registration for current repo
   run-watch  One-command verify workflow dispatch + watch
   run-focus  run-watch + All Green check + PR template sync
@@ -32,6 +33,7 @@ Commands:
 
 Examples:
   cd ~/dev/maakie-brainlab
+  ci-self up
   ci-self register
   ci-self run-watch
   ci-self run-focus
@@ -243,6 +245,57 @@ USAGE
   gh run watch "$run_id" -R "$repo" --exit-status
 }
 
+cmd_up() {
+  local repo=""
+  local repo_dir="$PWD"
+  local ref="main"
+  local labels=""
+  local runner_name=""
+  local runner_group=""
+  local discord_webhook_url=""
+  local force_workflow=0
+  local skip_workflow=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) repo="${2:-}"; shift 2 ;;
+      --repo-dir) repo_dir="${2:-}"; shift 2 ;;
+      --ref) ref="${2:-}"; shift 2 ;;
+      --labels) labels="${2:-}"; shift 2 ;;
+      --runner-name) runner_name="${2:-}"; shift 2 ;;
+      --runner-group) runner_group="${2:-}"; shift 2 ;;
+      --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
+      --force-workflow) force_workflow=1; shift ;;
+      --skip-workflow) skip_workflow=1; shift ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self up [--repo owner/repo] [--repo-dir path] [--ref branch] [--labels csv]
+                  [--runner-name name] [--runner-group name] [--discord-webhook-url url]
+                  [--force-workflow] [--skip-workflow]
+USAGE
+        return 0
+        ;;
+      *)
+        echo "ERROR: unknown option for up: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  local register_args=(--repo-dir "$repo_dir" --ref "$ref")
+  [[ -n "$repo" ]] && register_args+=(--repo "$repo")
+  [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+  [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
+  [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
+  [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
+  [[ "$force_workflow" -eq 1 ]] && register_args+=(--force-workflow)
+  [[ "$skip_workflow" -eq 1 ]] && register_args+=(--skip-workflow)
+  cmd_register "${register_args[@]}"
+
+  local run_focus_args=(--ref "$ref" --project-dir "$repo_dir")
+  [[ -n "$repo" ]] && run_focus_args+=(--repo "$repo")
+  cmd_run_watch --all-green --sync-pr-template "${run_focus_args[@]}"
+}
+
 quote_words() {
   local out=""
   local q=""
@@ -442,6 +495,7 @@ main() {
   local cmd="${1:-help}"
   shift || true
   case "$cmd" in
+    up) cmd_up "$@" ;;
     register) cmd_register "$@" ;;
     run-watch) cmd_run_watch "$@" ;;
     run-focus) cmd_run_watch --all-green --sync-pr-template "$@" ;;

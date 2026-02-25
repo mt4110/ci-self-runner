@@ -1,6 +1,6 @@
 # QUICKSTART（実稼働の最短導線）
 
-## 最短2コマンド（推奨）
+## 最短1コマンド（推奨）
 
 最初の1回だけ:
 
@@ -13,9 +13,10 @@ CI実施プロジェクトで:
 
 ```bash
 cd ~/dev/maakie-brainlab
-ci-self register
-ci-self run-focus
+ci-self up
 ```
+
+`ci-self up` は `register + run-focus` を連続実行し、PRテンプレートが無ければ自動生成します。
 
 同一LANの Mac mini で実行する場合:
 

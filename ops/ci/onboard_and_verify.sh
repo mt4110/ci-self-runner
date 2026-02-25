@@ -8,7 +8,7 @@ Usage:
 
 Options:
   --repo <owner/repo>     Target repository (required)
-  --repo-dir <path>       Local path of target repo (optional; used to scaffold verify.yml)
+  --repo-dir <path>       Local path of target repo (optional; used to scaffold verify.yml/pr template)
   --ref <branch>          Branch/ref for workflow dispatch (default: main)
   --labels <csv>          Runner labels for registration (default: self-hosted,mac-mini,colima,verify-full)
   --runner-name <name>    Runner name override
@@ -24,7 +24,7 @@ Examples:
   # 最短: runner登録 + owner変数 + verify dispatch
   bash ops/ci/onboard_and_verify.sh --repo mt4110/maakie-brainlab
 
-  # verify.yml をローカル作成してから dispatch
+  # verify.yml / PR template をローカル作成してから dispatch
   bash ops/ci/onboard_and_verify.sh --repo mt4110/maakie-brainlab --repo-dir ~/dev/maakie-brainlab
 USAGE
 }
@@ -152,7 +152,12 @@ if [[ "$SKIP_WORKFLOW" -ne 1 && -n "$REPO_DIR" ]]; then
     scaffold_args+=(--force)
   fi
   bash ops/ci/scaffold_verify_workflow.sh "${scaffold_args[@]}"
-  echo "NOTE: commit workflow changes in $REPO_DIR if needed (verify.yml/.gitignore)"
+fi
+
+if [[ -n "$REPO_DIR" ]]; then
+  echo "OK: scaffold_pr_template repo_dir=$REPO_DIR"
+  bash ops/ci/scaffold_pr_template.sh --repo "$REPO_DIR" --apply
+  echo "NOTE: commit workflow/template changes in $REPO_DIR if needed (.github/workflows/verify.yml/.github/pull_request_template.md/.gitignore)"
 fi
 
 if [[ "$SKIP_DISPATCH" -eq 1 ]]; then
