@@ -27,21 +27,21 @@ bash ops/ci/install_cli.sh
 ```bash
 cd ~/dev/maakie-brainlab
 ci-self register
-ci-self run-watch
+ci-self run-focus
 ```
 
 ### ローカルネットワーク編（MacBook -> 同一LANの Mac mini）
 
 ```bash
 ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self register'
-ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self run-watch'
+ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self run-focus'
 ```
 
 ### リモートネットワーク編（外出先）
 
 ```bash
-# どこからでも dispatch + watch
-ci-self run-watch --repo mt4110/maakie-brainlab --ref main
+# どこからでも dispatch + All Green確認 + PRテンプレ同期
+ci-self run-focus --repo mt4110/maakie-brainlab --ref main
 
 # queued で詰まった時だけ、Mac mini 側を復旧
 ssh <mac-mini-remote-host> 'colima status || colima start'
@@ -54,6 +54,15 @@ ssh <mac-mini-remote-host> 'colima status || colima start'
 3. `runner_health`
 4. `SELF_HOSTED_OWNER` 変数設定
 5. カレントプロジェクトに `verify.yml` を生成（必要時）
+
+`ci-self run-focus` が実施すること:
+
+1. `verify.yml` dispatch
+2. 実行結果 watch（失敗なら即終了）
+3. PR checks を All Green まで watch
+4. PRテンプレートを検出して PR title/body を自動同期（テンプレートがある場合）
+
+これで `Copilot review` / `Codex review` に集中できます。
 
 ## Production QuickStart（実稼働用）
 

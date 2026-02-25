@@ -14,7 +14,7 @@ CI実施プロジェクトで:
 ```bash
 cd ~/dev/maakie-brainlab
 ci-self register
-ci-self run-watch
+ci-self run-focus
 ```
 
 ## 前提

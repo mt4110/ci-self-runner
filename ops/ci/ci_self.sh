@@ -23,6 +23,7 @@ Usage:
 Commands:
   register   One-command runner registration for current repo
   run-watch  One-command verify workflow dispatch + watch
+  run-focus  run-watch + All Green check + PR template sync
   watch      Watch latest verify workflow run
   help       Show this help
 
@@ -30,6 +31,7 @@ Examples:
   cd ~/dev/maakie-brainlab
   ci-self register
   ci-self run-watch
+  ci-self run-focus
 USAGE
 }
 
@@ -40,6 +42,78 @@ resolve_repo() {
     return
   fi
   gh repo view --json nameWithOwner --jq .nameWithOwner
+}
+
+current_branch() {
+  git branch --show-current
+}
+
+resolve_pr_number() {
+  local repo="$1"
+  local branch="$2"
+  gh pr list -R "$repo" --state open --head "$branch" --json number --jq '.[0].number // empty'
+}
+
+find_pr_template() {
+  local root="${1:-$PWD}"
+  local f=""
+  for p in \
+    ".github/pull_request_template.md" \
+    ".github/PULL_REQUEST_TEMPLATE.md" \
+    "PULL_REQUEST_TEMPLATE.md" \
+    "docs/pull_request_template.md"; do
+    if [[ -f "$root/$p" ]]; then
+      echo "$root/$p"
+      return 0
+    fi
+  done
+
+  if [[ -d "$root/.github/PULL_REQUEST_TEMPLATE" ]]; then
+    f="$(find "$root/.github/PULL_REQUEST_TEMPLATE" -maxdepth 1 -type f -name '*.md' | sort | head -n 1)"
+    if [[ -n "$f" ]]; then
+      echo "$f"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+extract_title_from_template() {
+  local file="$1"
+  local title=""
+  title="$(awk 'BEGIN{IGNORECASE=1} /^title[[:space:]]*:/ {sub(/^title[[:space:]]*:[[:space:]]*/,""); print; exit}' "$file")"
+  if [[ -z "$title" ]]; then
+    title="$(awk '/^#[[:space:]]+/ {sub(/^#[[:space:]]+/,""); print; exit}' "$file")"
+  fi
+  if [[ -z "$title" ]]; then
+    title="$(awk 'NF {print; exit}' "$file")"
+  fi
+  printf '%s\n' "$title"
+}
+
+sync_pr_from_template() {
+  local repo="$1"
+  local pr_number="$2"
+  local root="${3:-$PWD}"
+  local tmpl=""
+  if ! tmpl="$(find_pr_template "$root")"; then
+    echo "SKIP: pr_template_sync reason=template_not_found"
+    return 0
+  fi
+
+  local title
+  title="$(extract_title_from_template "$tmpl")"
+  if [[ -z "$title" ]]; then
+    echo "SKIP: pr_template_sync reason=empty_title"
+    return 0
+  fi
+
+  local body_file
+  body_file="$(mktemp)"
+  cp "$tmpl" "$body_file"
+  gh pr edit "$pr_number" -R "$repo" --title "$title" --body-file "$body_file"
+  rm -f "$body_file"
+  echo "OK: pr_template_sync pr=$pr_number template=$tmpl title=$title"
 }
 
 cmd_register() {
@@ -90,13 +164,21 @@ USAGE
 cmd_run_watch() {
   local repo=""
   local ref="main"
+  local sync_pr_template=0
+  local pr_number=""
+  local all_green=0
+  local project_dir="$PWD"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) repo="${2:-}"; shift 2 ;;
       --ref) ref="${2:-}"; shift 2 ;;
+      --sync-pr-template) sync_pr_template=1; shift ;;
+      --all-green) all_green=1; shift ;;
+      --pr) pr_number="${2:-}"; shift 2 ;;
+      --project-dir) project_dir="${2:-}"; shift 2 ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self run-watch [--repo owner/repo] [--ref branch]
+Usage: ci-self run-watch [--repo owner/repo] [--ref branch] [--all-green] [--sync-pr-template] [--pr <number>] [--project-dir <path>]
 USAGE
         return 0
         ;;
@@ -112,6 +194,22 @@ USAGE
   run_id="$(gh run list --workflow verify.yml -R "$repo" --limit 1 --json databaseId --jq '.[0].databaseId')"
   [[ -n "$run_id" ]] || { echo "ERROR: failed to resolve verify run id" >&2; return 1; }
   gh run watch "$run_id" -R "$repo" --exit-status
+
+  if [[ "$all_green" -eq 1 || "$sync_pr_template" -eq 1 ]]; then
+    local branch=""
+    branch="$(current_branch 2>/dev/null || true)"
+    if [[ -z "$pr_number" && -n "$branch" ]]; then
+      pr_number="$(resolve_pr_number "$repo" "$branch")"
+    fi
+    if [[ -z "$pr_number" ]]; then
+      echo "SKIP: pr_checks reason=pr_not_found_for_branch"
+    else
+      gh pr checks "$pr_number" -R "$repo" --watch
+      if [[ "$sync_pr_template" -eq 1 ]]; then
+        sync_pr_from_template "$repo" "$pr_number" "$project_dir"
+      fi
+    fi
+  fi
 }
 
 cmd_watch() {
@@ -147,6 +245,7 @@ main() {
   case "$cmd" in
     register) cmd_register "$@" ;;
     run-watch) cmd_run_watch "$@" ;;
+    run-focus) cmd_run_watch --all-green --sync-pr-template "$@" ;;
     watch) cmd_watch "$@" ;;
     help|-h|--help) usage ;;
     *)
