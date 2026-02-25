@@ -86,4 +86,3 @@ func TestScaffoldPRTemplateForceOverwritesExisting(t *testing.T) {
 		t.Fatalf("forced content not written\ncontent:\n%s", string(b))
 	}
 }
-
