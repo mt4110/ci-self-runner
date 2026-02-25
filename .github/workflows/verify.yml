@@ -90,6 +90,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: verify-full-dryrun-${{ github.run_id }}
+          retention-days: 1
           if-no-files-found: warn
           path: |
             out/verify-full.status
