@@ -13,6 +13,48 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 - 上記を外れて運用する場合は、`docs/ci/SECURITY_HARDENING_TASK.md` を先に満たしてください
 - GitHub Actions の self-hosted 実行は `SELF_HOSTED_OWNER` 変数一致時のみ有効です
 
+## 理想系（2コマンド運用）
+
+最初の1回だけ（CLIインストール）:
+
+```bash
+cd ~/dev/ci-self-runner
+bash ops/ci/install_cli.sh
+```
+
+### ローカル版（自分マシン Self-Hosted）
+
+```bash
+cd ~/dev/maakie-brainlab
+ci-self register
+ci-self run-watch
+```
+
+### ローカルネットワーク編（MacBook -> 同一LANの Mac mini）
+
+```bash
+ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self register'
+ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self run-watch'
+```
+
+### リモートネットワーク編（外出先）
+
+```bash
+# どこからでも dispatch + watch
+ci-self run-watch --repo mt4110/maakie-brainlab --ref main
+
+# queued で詰まった時だけ、Mac mini 側を復旧
+ssh <mac-mini-remote-host> 'colima status || colima start'
+```
+
+`ci-self register` が実施すること:
+
+1. `colima` 起動確認
+2. runner 登録（repo指定で token 自動取得）
+3. `runner_health`
+4. `SELF_HOSTED_OWNER` 変数設定
+5. カレントプロジェクトに `verify.yml` を生成（必要時）
+
 ## Production QuickStart（実稼働用）
 
 詳細: `docs/ci/QUICKSTART.md`

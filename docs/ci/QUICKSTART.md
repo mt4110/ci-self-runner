@@ -1,5 +1,22 @@
 # QUICKSTART（実稼働の最短導線）
 
+## 最短2コマンド（推奨）
+
+最初の1回だけ:
+
+```bash
+cd ~/dev/ci-self-runner
+bash ops/ci/install_cli.sh
+```
+
+CI実施プロジェクトで:
+
+```bash
+cd ~/dev/maakie-brainlab
+ci-self register
+ci-self run-watch
+```
+
 ## 前提
 
 - macOS（Mac mini 推奨）
