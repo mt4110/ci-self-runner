@@ -13,7 +13,10 @@ permissions:
 
 jobs:
   verify-lite:
-    runs-on: ubuntu-latest
+    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    runs-on:
+      - self-hosted
+      - mac-mini
     timeout-minutes: 20
     steps:
       - name: Checkout
