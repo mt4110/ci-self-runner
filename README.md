@@ -1,80 +1,78 @@
 # runner-kit (self-hosted runner + colima + docker)
 
-※Mac OS only
+macOS 向けの self-hosted runner 運用キットです。
 
-GitHub を「計算機」ではなく「公証台帳」に寄せる運用キットです。  
-検証の主処理は Mac mini（self-hosted + colima + docker）で実行し、PRは最後に作成します。
+## 最短導線
 
-## Scope（重要）
-
-- このリポジトリは **個人運用（single-owner）専用** です
-- self-hosted runner は **自分のリポジトリ/自分の変更** に限定して使います
-- 外部コラボ・外部PR・fork PR の実行用途は想定しません
-- 上記を外れて運用する場合は、`docs/ci/SECURITY_HARDENING_TASK.md` を先に満たしてください
-- GitHub Actions の self-hosted 実行は `SELF_HOSTED_OWNER` 変数一致時のみ有効です
-
-## 理想系（2コマンド運用）
-
-最初の1回だけ（CLIインストール）:
+最初の1回だけ:
 
 ```bash
 cd ~/dev/ci-self-runner
 bash ops/ci/install_cli.sh
 ```
 
-### ローカル版（自分マシン Self-Hosted）
+CI対象リポジトリで（ローカル）:
 
 ```bash
 cd ~/dev/maakie-brainlab
 ci-self up
 ```
 
-### ローカルネットワーク編（MacBook -> 同一LANの Mac mini）
+- `ci-self up` は `register + run-focus` を連続実行
+- `verify.yml` / PRテンプレートが無ければ自動雛形を生成
+
+## ネットワーク別の最短
+
+同一LANの Mac mini へ SSH:
 
 ```bash
-cd ~/dev/maakie-brainlab
 ci-self remote-up --host <mac-mini-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
 ```
 
-### リモートネットワーク編（外出先）
+外出先（SSHあり）:
 
 ```bash
-# どこからでも (SSHあり): Mac mini 上で register + run-focus を1コマンド実行
 ci-self remote-up --host <mac-mini-remote-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
+```
 
-# どこからでも (SSHなし): dispatch + All Green確認 + PRテンプレ同期のみ実行
+外出先（SSHなし）:
+
+```bash
 ci-self run-focus --repo mt4110/maakie-brainlab --ref main
 ```
 
-サブコマンド要約:
+## さらに短縮する設定ファイル
 
-- `ci-self up`: `register` + `run-focus` を連続実行（ローカル最短）
-- `ci-self register`: colima確認 + runner登録 + health + `SELF_HOSTED_OWNER` + 必要なら `verify.yml` / PRテンプレ雛形
-- `ci-self run-focus`: verify dispatch/watch + PR checks All Green待機 + PRテンプレ同期
-- `ci-self remote-up`: SSH先で `register` と `run-focus` を連続実行
+`ci-self` は `.ci-self.env` を自動読み込みします。
 
-補足: `remote-*` は接続先Macに `ci-self`（`bash ops/ci/install_cli.sh` 実行済み）が必要です。
-
-## 補助コマンド（3ステップ版 / CLI未導入時）
+作成:
 
 ```bash
-# 1) runner登録
-go run ./cmd/runner_setup --apply --repo <owner/repo>
-
-# 2) 健康診断
-go run ./cmd/runner_health
-
-# 3) verify実行
-go run ./cmd/verify_lite_host
-go run ./cmd/verify_full_host --dry-run
+ci-self config-init
 ```
 
-SOT（判定の真実）:
+例:
 
-- `out/runner-setup.status`
-- `out/health.status`
-- `out/verify-lite.status`
-- `out/verify-full.status`
+```env
+CI_SELF_REPO=mt4110/maakie-brainlab
+CI_SELF_REF=main
+CI_SELF_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_REMOTE_HOST=mac-mini.local
+CI_SELF_REMOTE_PROJECT_DIR=~/dev/maakie-brainlab
+CI_SELF_PR_BASE=main
+```
+
+以後はオプションを減らして実行できます。
+
+## 主要コマンド
+
+- `ci-self up`: ローカル最短（register + run-focus）
+- `ci-self focus`: run-focus 後、PR未作成なら自動作成し checks を監視
+- `ci-self doctor --fix`: 依存/gh auth/colima/docker/runner_health を診断し可能な範囲で修復
+- `ci-self remote-up`: SSH先で register + run-focus
+- `ci-self config-init`: `.ci-self.env` テンプレート生成
+
+注: `doctor --fix` は `gh auth login` だけは自動化できないため、未ログイン時は手動ログインが必要です。
 
 ## 初回セットアップ（対象リポジトリ）
 
@@ -89,20 +87,14 @@ printf '%s' '<discord-webhook-url>' | gh secret set DISCORD_WEBHOOK_URL -R <owne
 bash ops/ci/scaffold_verify_workflow.sh --repo ~/dev/<target-repo> --apply
 ```
 
-## 外出先運用の要点
+## セキュリティ前提
 
-- SSHあり: `ci-self remote-up ...` が最短
-- SSHなし: `ci-self run-focus --repo <owner/repo> --ref main`
-- runner/colima 停止時のみ、SSHで復旧
+- 個人運用（single-owner）向け
+- self-hosted 実行は `SELF_HOSTED_OWNER` 一致時のみ許可
+- 外部コラボ / fork PR で使う場合は先に `docs/ci/SECURITY_HARDENING_TASK.md` を実施
 
-```bash
-ci-self remote-register --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo>
-ci-self remote-run-focus --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo> --ref main
-```
+## 詳細
 
-## 詳細ドキュメント
-
-- `docs/ci/QUICKSTART.md`（最短運用）
-- `docs/ci/RUNBOOK.md`（障害復旧）
-- `docs/ci/SECURITY_HARDENING_TASK.md`（外部コラボ時の必須対策）
-- その他は `docs/ci/` 配下を参照
+- `docs/ci/QUICKSTART.md`
+- `docs/ci/RUNBOOK.md`
+- `docs/ci/SECURITY_HARDENING_TASK.md`
