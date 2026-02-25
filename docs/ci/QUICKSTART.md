@@ -1,5 +1,22 @@
 # QUICKSTART（実稼働の最短導線）
 
+## 最短2コマンド（推奨）
+
+最初の1回だけ:
+
+```bash
+cd ~/dev/ci-self-runner
+bash ops/ci/install_cli.sh
+```
+
+CI実施プロジェクトで:
+
+```bash
+cd ~/dev/maakie-brainlab
+ci-self register
+ci-self run-focus
+```
+
 ## 前提
 
 - macOS（Mac mini 推奨）
@@ -9,11 +26,16 @@
 ## 1) Runner セットアップ（初回のみ）
 
 ```bash
-go run ./cmd/runner_setup --apply
+# 再起動直後は runtime を復帰
+colima status || colima start
+
+# 1コマンドで runner 登録まで実行
+go run ./cmd/runner_setup --apply --repo <owner/repo>
 ```
 
 - SOT: `out/runner-setup.status` の `status=OK` を確認
 - 冪等: 既にセットアップ済みならスキップ
+- `RUNNER_TOKEN` 未指定時は `gh api` で registration token を自動取得
 
 ## 2) 健康診断
 

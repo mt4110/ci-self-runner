@@ -13,13 +13,68 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 - 上記を外れて運用する場合は、`docs/ci/SECURITY_HARDENING_TASK.md` を先に満たしてください
 - GitHub Actions の self-hosted 実行は `SELF_HOSTED_OWNER` 変数一致時のみ有効です
 
+## 理想系（2コマンド運用）
+
+最初の1回だけ（CLIインストール）:
+
+```bash
+cd ~/dev/ci-self-runner
+bash ops/ci/install_cli.sh
+```
+
+### ローカル版（自分マシン Self-Hosted）
+
+```bash
+cd ~/dev/maakie-brainlab
+ci-self register
+ci-self run-focus
+```
+
+### ローカルネットワーク編（MacBook -> 同一LANの Mac mini）
+
+```bash
+ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self register'
+ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self run-focus'
+```
+
+### リモートネットワーク編（外出先）
+
+```bash
+# どこからでも dispatch + All Green確認 + PRテンプレ同期
+ci-self run-focus --repo mt4110/maakie-brainlab --ref main
+
+# queued で詰まった時だけ、Mac mini 側を復旧
+ssh <mac-mini-remote-host> 'colima status || colima start'
+```
+
+`ci-self register` が実施すること:
+
+1. `colima` 起動確認
+2. runner 登録（repo指定で token 自動取得）
+3. `runner_health`
+4. `SELF_HOSTED_OWNER` 変数設定
+5. カレントプロジェクトに `verify.yml` を生成（必要時）
+
+`ci-self run-focus` が実施すること:
+
+1. `verify.yml` dispatch
+2. 実行結果 watch（失敗なら即終了）
+3. PR checks を All Green まで watch
+4. PRテンプレートを検出して PR title/body を自動同期（テンプレートがある場合）
+
+これで `Copilot review` / `Codex review` に集中できます。
+
 ## Production QuickStart（実稼働用）
 
 詳細: `docs/ci/QUICKSTART.md`
 
 ```bash
+# 0) 再起動直後は docker runtime を復帰
+colima status || colima start
+
 # 1) Runner セットアップ（初回のみ・冪等）
-go run ./cmd/runner_setup --apply
+#    - gh auth が有効なら registration token を自動取得して登録まで実行
+go run ./cmd/runner_setup --apply --repo <owner/repo>
 
 # 2) 健康診断
 go run ./cmd/runner_health
@@ -32,6 +87,18 @@ go run ./cmd/verify_full_host --dry-run
 ```
 
 SOT（判定の真実）: `out/runner-setup.status`, `out/health.status`, `out/verify-lite.status`, `out/verify-full.status`
+
+runner を1コマンド登録（最短）:
+
+```bash
+go run ./cmd/runner_setup --apply --repo mt4110/maakie-brainlab
+```
+
+補足:
+
+- デフォルト install 先は `~/.local/ci-runner-<owner>-<repo>`（repoごとに分離）
+- `RUNNER_TOKEN` を渡さない場合は `gh api` で registration token を自動取得
+- オプション: `--labels`, `--name`, `--runner-group`, `--install-dir`, `--no-service`
 
 ## 最短 1-2-3（運用手順）
 
@@ -69,6 +136,26 @@ gh run watch "$RUN_ID" -R <owner/repo> --exit-status
 ```
 
 複数リポジトリ運用時は毎回 `-R <owner/repo>` を変えるだけです。
+
+注意:
+
+- `gh workflow run verify.yml ...` は、対象リポジトリに `.github/workflows/verify.yml` が存在しないと 404 になります。
+- 先に対象リポジトリへ workflow を作成してコミットしてください。
+
+workflow を1コマンドで生成（`ci-self-runner` リポジトリから実行）:
+
+```bash
+bash ops/ci/scaffold_verify_workflow.sh --repo ~/dev/maakie-brainlab --apply
+```
+
+生成後は対象リポジトリでコミット:
+
+```bash
+cd ~/dev/maakie-brainlab
+git add .github/workflows/verify.yml .gitignore
+git commit -m "ci: add self-hosted verify workflow"
+git push
+```
 
 ## system architecture flow
 
@@ -144,6 +231,7 @@ DISCORD_WEBHOOK_URL='https://example.invalid/webhook' mise x -- \
 まず状態確認:
 
 ```bash
+ssh <mac-mini-host> 'colima status || colima start'
 gh api repos/<owner/repo>/actions/runners --jq '.runners[] | {name,status,busy}'
 ```
 
