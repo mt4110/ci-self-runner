@@ -206,8 +206,17 @@ fi
 
 mkdir -p "$WORKFLOW_DIR"
 if [[ -f "$WORKFLOW_FILE" && "$FORCE" -ne 1 ]]; then
-  echo "ERROR: $WORKFLOW_FILE already exists (use --force to overwrite)" >&2
-  exit 2
+  echo "SKIP: $WORKFLOW_FILE already exists (use --force to overwrite)"
+  if [[ "$UPDATE_GITIGNORE" -eq 1 ]]; then
+    touch "$GITIGNORE_FILE"
+    for entry in ".local/" "out/" "cache/"; do
+      if ! grep -Fxq "$entry" "$GITIGNORE_FILE"; then
+        printf '%s\n' "$entry" >>"$GITIGNORE_FILE"
+        echo "OK: added to .gitignore: $entry"
+      fi
+    done
+  fi
+  exit 0
 fi
 
 cp "$TMP_FILE" "$WORKFLOW_FILE"
