@@ -1,6 +1,6 @@
 # QUICKSTART（実稼働の最短導線）
 
-## 最短2コマンド（推奨）
+## 最短1コマンド（推奨）
 
 最初の1回だけ:
 
@@ -13,8 +13,28 @@ CI実施プロジェクトで:
 
 ```bash
 cd ~/dev/maakie-brainlab
-ci-self register
-ci-self run-focus
+ci-self up
+```
+
+`ci-self up` は `register + run-focus` を連続実行し、PRテンプレートが無ければ自動生成します。
+
+同一LANの Mac mini で実行する場合:
+
+```bash
+cd ~/dev/maakie-brainlab
+ci-self remote-up --host <mac-mini-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
+```
+
+外出先で SSH 可能な場合:
+
+```bash
+ci-self remote-up --host <mac-mini-remote-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
+```
+
+外出先で SSH なしの場合（dispatch/watch のみ）:
+
+```bash
+ci-self run-focus --repo mt4110/maakie-brainlab --ref main
 ```
 
 ## 前提
@@ -81,3 +101,10 @@ go run ./cmd/verify_full_host
 1. 該当の `out/*.status` ファイルを確認
 2. `reason=` 行で原因を特定
 3. `docs/ci/RUNBOOK.md` の復旧手順を参照
+
+SSH経由の簡易復旧:
+
+```bash
+ci-self remote-register --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo>
+ci-self remote-run-focus --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo> --ref main
+```
