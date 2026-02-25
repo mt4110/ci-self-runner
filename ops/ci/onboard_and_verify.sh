@@ -32,6 +32,19 @@ USAGE
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+run_go() {
+  if command -v go >/dev/null 2>&1; then
+    go "$@"
+    return
+  fi
+  if command -v mise >/dev/null 2>&1; then
+    mise x -- go "$@"
+    return
+  fi
+  echo "ERROR: go not found (install go or mise)" >&2
+  exit 1
+}
+
 REPO=""
 REPO_DIR=""
 REF="main"
@@ -118,10 +131,10 @@ runner_setup_args=(--apply --repo "$REPO" --labels "$LABELS" --runner-group "$RU
 if [[ -n "$RUNNER_NAME" ]]; then
   runner_setup_args+=(--name "$RUNNER_NAME")
 fi
-go run ./cmd/runner_setup "${runner_setup_args[@]}"
+run_go run ./cmd/runner_setup "${runner_setup_args[@]}"
 
 echo "OK: runner_health_start"
-go run ./cmd/runner_health
+run_go run ./cmd/runner_health
 
 OWNER="$(gh repo view "$REPO" --json owner --jq .owner.login)"
 echo "OK: set_variable SELF_HOSTED_OWNER=$OWNER"
