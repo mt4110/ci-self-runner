@@ -1,110 +1,72 @@
-# QUICKSTART（実稼働の最短導線）
+# QUICKSTART
 
-## 最短1コマンド（推奨）
-
-最初の1回だけ:
+## 1) CLI を入れる（初回のみ）
 
 ```bash
 cd ~/dev/ci-self-runner
 bash ops/ci/install_cli.sh
 ```
 
-CI実施プロジェクトで:
+## 2) CI対象リポジトリで 1 コマンド実行
 
 ```bash
 cd ~/dev/maakie-brainlab
 ci-self up
 ```
 
-`ci-self up` は `register + run-focus` を連続実行し、PRテンプレートが無ければ自動生成します。
+`ci-self up` の実行内容:
 
-同一LANの Mac mini で実行する場合:
+1. `register`（runner登録・health・owner変数・workflow/template雛形）
+2. `run-focus`（verify実行/監視・PR checks監視・PRテンプレ同期）
 
-```bash
-cd ~/dev/maakie-brainlab
-ci-self remote-up --host <mac-mini-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
-```
-
-外出先で SSH 可能な場合:
+## 設定ファイルで毎回のオプションを省略
 
 ```bash
-ci-self remote-up --host <mac-mini-remote-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
+ci-self config-init
 ```
 
-外出先で SSH なしの場合（dispatch/watch のみ）:
+`.ci-self.env` 例:
+
+```env
+CI_SELF_REPO=mt4110/maakie-brainlab
+CI_SELF_REF=main
+CI_SELF_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_REMOTE_HOST=mac-mini.local
+CI_SELF_REMOTE_PROJECT_DIR=~/dev/maakie-brainlab
+CI_SELF_PR_BASE=main
+```
+
+## ネットワーク別ワンコマンド
+
+同一LAN / 外出先（SSHあり）:
 
 ```bash
-ci-self run-focus --repo mt4110/maakie-brainlab --ref main
+ci-self remote-up
 ```
 
-## 前提
+`remote-up` は `.ci-self.env` の `CI_SELF_REMOTE_HOST` などが設定済みの場合の最短です。
+未設定なら `--host --project-dir --repo` を明示してください。
 
-- macOS（Mac mini 推奨）
-- `go`, `gh`, `docker`, `colima` がインストール済み
-- `mise trust && mise install` 実行済み
-
-## 1) Runner セットアップ（初回のみ）
+外出先（SSHなし）:
 
 ```bash
-# 再起動直後は runtime を復帰
-colima status || colima start
-
-# 1コマンドで runner 登録まで実行
-go run ./cmd/runner_setup --apply --repo <owner/repo>
+ci-self run-focus
 ```
 
-- SOT: `out/runner-setup.status` の `status=OK` を確認
-- 冪等: 既にセットアップ済みならスキップ
-- `RUNNER_TOKEN` 未指定時は `gh api` で registration token を自動取得
-
-## 2) 健康診断
+## 事前診断と自己修復
 
 ```bash
-go run ./cmd/runner_health
+ci-self doctor --fix
 ```
 
-- SOT: `out/health.status` の `status=OK` を確認
-- runner online / colima / docker / disk を一括チェック
+確認項目:
 
-## 3) 軽量検証
+- `gh` / `colima` / `docker`
+- `gh auth status`
+- runner online（repo指定/設定時）
+- `runner_health`
 
-```bash
-go run ./cmd/verify_lite_host
-```
+## トラブル時
 
-- SOT: `out/verify-lite.status` の `status=OK` を確認
-
-## 4) フル検証（dry-run）
-
-```bash
-go run ./cmd/verify_full_host --dry-run
-```
-
-- SOT: `out/verify-full.status` の `status=OK` を確認
-
-## 5) フル検証（本番）
-
-```bash
-# docker image を先にビルド
-docker build -t ci-self-runner:local -f ci/image/Dockerfile .
-
-# フル検証を実行
-go run ./cmd/verify_full_host
-```
-
-- SOT: `out/verify-full.status` の `status=OK` を確認
-
-## トラブルシュート
-
-`ERROR:` が出たら:
-
-1. 該当の `out/*.status` ファイルを確認
-2. `reason=` 行で原因を特定
-3. `docs/ci/RUNBOOK.md` の復旧手順を参照
-
-SSH経由の簡易復旧:
-
-```bash
-ci-self remote-register --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo>
-ci-self remote-run-focus --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo> --ref main
-```
+- `ERROR:` が出たら `out/*.status` を確認
+- 詳細手順は `docs/ci/RUNBOOK.md`
