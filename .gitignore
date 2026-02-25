@@ -3,6 +3,7 @@
 
 # local work dirs (runtime artifacts; do not publish)
 .local/
+.codex/
 tmp/
 out/
 out/gha-artifacts/

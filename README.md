@@ -13,6 +13,26 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 - 上記を外れて運用する場合は、`docs/ci/SECURITY_HARDENING_TASK.md` を先に満たしてください
 - GitHub Actions の self-hosted 実行は `SELF_HOSTED_OWNER` 変数一致時のみ有効です
 
+## Production QuickStart（実稼働用）
+
+詳細: `docs/ci/QUICKSTART.md`
+
+```bash
+# 1) Runner セットアップ（初回のみ・冪等）
+go run ./cmd/runner_setup --apply
+
+# 2) 健康診断
+go run ./cmd/runner_health
+
+# 3) 軽量検証（ホストラッパ経由）
+go run ./cmd/verify_lite_host
+
+# 4) フル検証 dry-run（ホストラッパ経由）
+go run ./cmd/verify_full_host --dry-run
+```
+
+SOT（判定の真実）: `out/runner-setup.status`, `out/health.status`, `out/verify-lite.status`, `out/verify-full.status`
+
 ## 初学者向け: 安全に始める3ステップ
 
 1. GitHubの変数/シークレットを先に設定する（これをしないと self-hosted job は動かない）  
@@ -35,6 +55,9 @@ printf '%s' '<paste-discord-webhook-url-here>' | gh secret set DISCORD_WEBHOOK_U
 
 ## 入口ドキュメント
 
+- `docs/ci/QUICKSTART.md`（実稼働 QuickStart）
+- `docs/ci/QUICKSTART_PLAN.md`（設計 SOT）
+- `docs/ci/RUNNER_LOCK.md`（Runner バージョン固定）
 - `docs/ci/SYSTEM.md`
 - `docs/ci/FLOW.md`
 - `docs/ci/RUNNER_ISOLATION.md`

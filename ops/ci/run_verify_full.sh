@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# Shell極薄: Docker経由で verify-full を実行する
+# SOT: out/verify-full.status
+# ホスト側ラッパ: go run ./cmd/verify_full_host (--dry-run)
 
 IMAGE="${IMAGE:-ci-self-runner:local}"
 REPO_DIR="${REPO_DIR:-$PWD}"
