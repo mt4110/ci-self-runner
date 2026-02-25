@@ -22,7 +22,8 @@ GitHub を「計算機」ではなく「公証台帳」に寄せる運用キッ�
 colima status || colima start
 
 # 1) Runner セットアップ（初回のみ・冪等）
-go run ./cmd/runner_setup --apply
+#    - gh auth が有効なら registration token を自動取得して登録まで実行
+go run ./cmd/runner_setup --apply --repo <owner/repo>
 
 # 2) 健康診断
 go run ./cmd/runner_health
@@ -35,6 +36,18 @@ go run ./cmd/verify_full_host --dry-run
 ```
 
 SOT（判定の真実）: `out/runner-setup.status`, `out/health.status`, `out/verify-lite.status`, `out/verify-full.status`
+
+runner を1コマンド登録（最短）:
+
+```bash
+go run ./cmd/runner_setup --apply --repo mt4110/maakie-brainlab
+```
+
+補足:
+
+- デフォルト install 先は `~/.local/ci-runner-<owner>-<repo>`（repoごとに分離）
+- `RUNNER_TOKEN` を渡さない場合は `gh api` で registration token を自動取得
+- オプション: `--labels`, `--name`, `--runner-group`, `--install-dir`, `--no-service`
 
 ## 最短 1-2-3（運用手順）
 

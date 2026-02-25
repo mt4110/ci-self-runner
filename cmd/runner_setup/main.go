@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +21,7 @@ const (
 	runnerBaseURL = "https://github.com/actions/runner/releases/download/v" + runnerVersion
 	statusOKMsg   = "STATUS: OK"
 	statusERRMsg  = "STATUS: ERROR"
+	defaultLabels = "self-hosted,mac-mini,colima,verify-full"
 )
 
 // SHA256 hashes for runner tarballs (SOT: docs/ci/RUNNER_LOCK.md)
@@ -26,6 +29,16 @@ const (
 var runnerHashes = map[string]string{
 	"osx-x64":   "", // fill from GitHub releases page
 	"osx-arm64": "", // fill from GitHub releases page
+}
+
+type options struct {
+	apply      bool
+	repo       string
+	installDir string
+	labels     string
+	runnerName string
+	group      string
+	noService  bool
 }
 
 func main() {
@@ -37,8 +50,14 @@ func main() {
 		}
 	}()
 
-	apply := hasFlag("--apply")
-	if !apply {
+	opts, err := parseOptions(os.Args[1:])
+	if err != nil {
+		printUsage()
+		printErrorAndExit("invalid_args=" + err.Error())
+		return
+	}
+
+	if !opts.apply {
 		fmt.Println("OK: runner_setup dry-run (pass --apply to execute)")
 	}
 
@@ -48,29 +67,37 @@ func main() {
 		return
 	}
 	fmt.Printf("OK: runner_setup arch=%s version=v%s\n", arch, runnerVersion)
-
-	installDir := filepath.Join(os.Getenv("HOME"), ".local", "ci-runner")
+	if opts.repo != "" {
+		fmt.Printf("OK: runner_setup repo=%s\n", opts.repo)
+	}
+	fmt.Printf("OK: runner_setup install_dir=%s\n", opts.installDir)
 
 	// Check if already installed
-	configPath := filepath.Join(installDir, ".runner")
+	configPath := filepath.Join(opts.installDir, ".runner")
 	if _, err := os.Stat(configPath); err == nil {
-		fmt.Printf("OK: runner_setup already_installed dir=%s\n", installDir)
+		fmt.Printf("OK: runner_setup already_installed dir=%s\n", opts.installDir)
 		writeStatus("OK", "already_installed")
 		fmt.Println(statusOKMsg)
 		return
 	}
 
-	if !apply {
+	if !opts.apply {
 		tarball := fmt.Sprintf("actions-runner-%s-%s.tar.gz", arch, runnerVersion)
 		downloadURL := runnerBaseURL + "/" + tarball
 		fmt.Printf("OK: runner_setup would_download url=%s\n", downloadURL)
-		fmt.Printf("OK: runner_setup would_install dir=%s\n", installDir)
+		fmt.Printf("OK: runner_setup would_install dir=%s\n", opts.installDir)
+		if opts.repo != "" {
+			fmt.Printf("OK: runner_setup would_config url=https://github.com/%s labels=%s group=%s\n", opts.repo, opts.labels, opts.group)
+			if os.Getenv("RUNNER_TOKEN") == "" {
+				fmt.Println("OK: runner_setup would_fetch_registration_token via=gh_api")
+			}
+		}
 		writeStatus("OK", "dry_run")
 		fmt.Println(statusOKMsg)
 		return
 	}
 
-	if err := executeSetup(arch, installDir); err != nil {
+	if err := executeSetup(arch, opts); err != nil {
 		printErrorAndExit(err.Error())
 		return
 	}
@@ -78,13 +105,81 @@ func main() {
 	fmt.Println(statusOKMsg)
 }
 
-func executeSetup(arch, installDir string) error {
+func parseOptions(args []string) (options, error) {
+	opts := options{
+		labels: defaultLabels,
+		group:  "Default",
+	}
+
+	fs := flag.NewFlagSet("runner_setup", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.BoolVar(&opts.apply, "apply", false, "execute setup")
+	fs.StringVar(&opts.repo, "repo", "", "target repository (owner/repo)")
+	fs.StringVar(&opts.installDir, "install-dir", "", "runner install directory")
+	fs.StringVar(&opts.labels, "labels", defaultLabels, "comma-separated labels")
+	fs.StringVar(&opts.runnerName, "name", "", "runner name")
+	fs.StringVar(&opts.group, "runner-group", "Default", "runner group")
+	fs.BoolVar(&opts.noService, "no-service", false, "skip svc.sh install/start")
+
+	if err := fs.Parse(args); err != nil {
+		return options{}, err
+	}
+	if fs.NArg() > 0 {
+		return options{}, fmt.Errorf("unexpected_args=%s", strings.Join(fs.Args(), ","))
+	}
+
+	if opts.repo == "" {
+		opts.repo = strings.TrimSpace(os.Getenv("RUNNER_REPO"))
+	}
+	if opts.installDir == "" {
+		opts.installDir = defaultInstallDir(opts.repo)
+	}
+	return opts, nil
+}
+
+func printUsage() {
+	fmt.Println("Usage: go run ./cmd/runner_setup [--apply] [--repo owner/repo] [--install-dir <dir>] [--labels <csv>] [--name <runner-name>] [--runner-group <group>] [--no-service]")
+}
+
+func defaultInstallDir(repo string) string {
+	base := filepath.Join(os.Getenv("HOME"), ".local")
+	if repo == "" {
+		return filepath.Join(base, "ci-runner")
+	}
+	return filepath.Join(base, "ci-runner-"+sanitizeForPath(repo))
+}
+
+func sanitizeForPath(s string) string {
+	if s == "" {
+		return "default"
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "default"
+	}
+	return out
+}
+
+func executeSetup(arch string, opts options) error {
 	tarball := fmt.Sprintf("actions-runner-%s-%s.tar.gz", arch, runnerVersion)
 	downloadURL := runnerBaseURL + "/" + tarball
-	tarballPath := filepath.Join(installDir, tarball)
+	tarballPath := filepath.Join(opts.installDir, tarball)
 
 	// Create install directory
-	if err := os.MkdirAll(installDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.installDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir_failed=%s", err.Error())
 	}
 
@@ -101,14 +196,14 @@ func executeSetup(arch, installDir string) error {
 	}
 
 	// Extract
-	fmt.Printf("OK: runner_setup extracting to=%s\n", installDir)
-	if err := runCmd(installDir, "tar", "xzf", tarballPath, "-C", installDir); err != nil {
+	fmt.Printf("OK: runner_setup extracting to=%s\n", opts.installDir)
+	if err := runCmd(opts.installDir, "tar", "xzf", tarballPath, "-C", opts.installDir); err != nil {
 		return fmt.Errorf("extract_failed=%s", err.Error())
 	}
 	fmt.Println("OK: runner_setup extracted")
 
 	// Config + service
-	return configureAndStartService(installDir)
+	return configureAndStartService(opts)
 }
 
 func verifySHA256(arch, tarballPath string) error {
@@ -128,14 +223,34 @@ func verifySHA256(arch, tarballPath string) error {
 	return nil
 }
 
-func configureAndStartService(installDir string) error {
-	runnerURL := os.Getenv("RUNNER_URL")
-	runnerToken := os.Getenv("RUNNER_TOKEN")
+func configureAndStartService(opts options) error {
+	installDir := opts.installDir
+	runnerURL := strings.TrimSpace(os.Getenv("RUNNER_URL"))
+	if runnerURL == "" && opts.repo != "" {
+		runnerURL = "https://github.com/" + opts.repo
+	}
+
+	runnerToken := strings.TrimSpace(os.Getenv("RUNNER_TOKEN"))
+	if runnerToken == "" && opts.repo != "" {
+		fmt.Printf("OK: runner_setup fetching_registration_token repo=%s\n", opts.repo)
+		token, err := fetchRepoRegistrationToken(opts.repo)
+		if err != nil {
+			return err
+		}
+		runnerToken = token
+		fmt.Println("OK: runner_setup fetched_registration_token")
+	}
+
 	if runnerURL == "" || runnerToken == "" {
 		fmt.Println("SKIP: runner_setup config reason=RUNNER_URL_or_RUNNER_TOKEN_not_set")
-		fmt.Println("OK: runner_setup extracted_only (set RUNNER_URL and RUNNER_TOKEN to configure)")
+		fmt.Println("OK: runner_setup extracted_only (set RUNNER_URL and RUNNER_TOKEN or use --repo to auto-resolve)")
 		writeStatus("OK", "extracted_only")
 		return nil
+	}
+
+	runnerName := strings.TrimSpace(opts.runnerName)
+	if runnerName == "" {
+		runnerName = defaultRunnerName(opts.repo)
 	}
 
 	// config.sh (token is NOT logged)
@@ -143,13 +258,20 @@ func configureAndStartService(installDir string) error {
 	if err := runCmd(installDir, filepath.Join(installDir, "config.sh"),
 		"--url", runnerURL,
 		"--token", runnerToken,
-		"--labels", "self-hosted,mac-mini,colima,verify-full",
-		"--runnergroup", "Default",
+		"--labels", opts.labels,
+		"--runnergroup", opts.group,
+		"--name", runnerName,
 		"--unattended",
 	); err != nil {
 		return fmt.Errorf("config_failed=%s", err.Error())
 	}
 	fmt.Println("OK: runner_setup configured")
+
+	if opts.noService {
+		fmt.Println("SKIP: runner_setup service reason=no_service_flag")
+		writeStatus("OK", "configured_no_service")
+		return nil
+	}
 
 	// svc.sh install + start
 	fmt.Println("OK: runner_setup installing_service")
@@ -163,6 +285,44 @@ func configureAndStartService(installDir string) error {
 	fmt.Println("OK: runner_setup service_started")
 	writeStatus("OK", "")
 	return nil
+}
+
+func fetchRepoRegistrationToken(repo string) (string, error) {
+	if !strings.Contains(repo, "/") {
+		return "", fmt.Errorf("invalid_repo=%s", repo)
+	}
+	cmd := exec.Command("gh", "api", "--method", "POST", fmt.Sprintf("repos/%s/actions/runners/registration-token", repo), "--jq", ".token")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("token_fetch_failed=%s", msg)
+	}
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", fmt.Errorf("token_fetch_empty")
+	}
+	return token, nil
+}
+
+func defaultRunnerName(repo string) string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = "mac-mini"
+	}
+	host = sanitizeForPath(host)
+	if repo == "" {
+		return host
+	}
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		return host + "-runner"
+	}
+	return host + "-" + sanitizeForPath(parts[1])
 }
 
 func printErrorAndExit(reason string) {
@@ -180,15 +340,6 @@ func detectArch() string {
 	default:
 		return ""
 	}
-}
-
-func hasFlag(flag string) bool {
-	for _, arg := range os.Args[1:] {
-		if arg == flag {
-			return true
-		}
-	}
-	return false
 }
 
 func runCmd(dir string, name string, args ...string) error {
