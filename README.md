@@ -33,21 +33,42 @@ go run ./cmd/verify_full_host --dry-run
 
 SOT（判定の真実）: `out/runner-setup.status`, `out/health.status`, `out/verify-lite.status`, `out/verify-full.status`
 
-## 初学者向け: 安全に始める3ステップ
+## 最短 1-2-3（運用手順）
 
-1. GitHubの変数/シークレットを先に設定する（これをしないと self-hosted job は動かない）  
-2. ローカルで `verify-lite` -> `verify-full --dry-run` の順に実行する  
-3. 問題が出たら `out/verify-lite.status` / `out/verify-full.status` の `ERROR:` 行から確認する
-
-最初に1回だけ実行:
+### 0) 初回だけ（対象リポジトリごと）
 
 ```bash
-# 変数（owner名）
+# 必須: ownerガード
 gh variable set SELF_HOSTED_OWNER -b "$(gh repo view --json owner --jq .owner.login)" -R <owner/repo>
 
-# 失敗通知（任意）
+# 任意: 失敗通知
 printf '%s' '<paste-discord-webhook-url-here>' | gh secret set DISCORD_WEBHOOK_URL -R <owner/repo>
 ```
+
+### 1) ローカル事前検証
+
+```bash
+mise x -- go run ./cmd/verify-lite
+mkdir -p out cache
+REPO_DIR='.' OUT_DIR='out' CACHE_DIR='cache' mise x -- go run ./cmd/verify-full --dry-run
+```
+
+失敗時は `out/verify-lite.status` / `out/verify-full.status` の `ERROR:` 行を確認。
+
+### 2) GitHub Actions 実行
+
+```bash
+gh workflow run verify.yml --ref main -R <owner/repo>
+```
+
+### 3) 完了待ち（成功/失敗を確定）
+
+```bash
+RUN_ID="$(gh run list --workflow verify.yml -R <owner/repo> --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run watch "$RUN_ID" -R <owner/repo> --exit-status
+```
+
+複数リポジトリ運用時は毎回 `-R <owner/repo>` を変えるだけです。
 
 ## system architecture flow
 
@@ -105,6 +126,41 @@ DISCORD_WEBHOOK_URL='https://example.invalid/webhook' mise x -- \
 3. `review-pack --profile core` で提出パック生成
 4. 必要時のみ `review-pack --profile optional`
 5. 検証後にPR作成（GitHubは証跡の公証台帳）
+
+## 外出先から Mac mini self-hosted runner を使う
+
+前提:
+
+- Mac mini が起動中
+- runner が `online`
+- colima / docker が動作中
+
+ポイント:
+
+- 外出先でも、GitHubへアクセスできれば `workflow_dispatch` と `PR` は実行可能です。
+- self-hosted runner は GitHub 側へ取りに行く方式なので、通常は「自宅回線への公開ポート」は不要です。
+- ただし runner 本体が停止している場合、復旧には Mac mini への遠隔管理手段（例: Tailscale + SSH）が必要です。
+
+まず状態確認:
+
+```bash
+gh api repos/<owner/repo>/actions/runners --jq '.runners[] | {name,status,busy}'
+```
+
+外出先から検証を流す:
+
+```bash
+gh workflow run verify.yml --ref main -R <owner/repo>
+RUN_ID="$(gh run list --workflow verify.yml -R <owner/repo> --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run watch "$RUN_ID" -R <owner/repo> --exit-status
+```
+
+runner が offline / colima停止で失敗した場合の復旧例（SSH可能時）:
+
+```bash
+ssh <mac-mini-host> 'colima status || colima start'
+ssh <mac-mini-host> 'cd ~/dev/ci-self-runner && gh api repos/<owner/repo>/actions/runners --jq ".runners[] | {name,status}"'
+```
 
 ## ローカル/リモート実行
 
