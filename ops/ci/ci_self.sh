@@ -24,6 +24,9 @@ Commands:
   register   One-command runner registration for current repo
   run-watch  One-command verify workflow dispatch + watch
   run-focus  run-watch + All Green check + PR template sync
+  remote-register  Run `register` over SSH on remote host
+  remote-run-focus Run `run-focus` over SSH on remote host
+  remote-up        Run `remote-register` + `remote-run-focus` in one command
   watch      Watch latest verify workflow run
   help       Show this help
 
@@ -32,6 +35,7 @@ Examples:
   ci-self register
   ci-self run-watch
   ci-self run-focus
+  ci-self remote-up --host mac-mini.local --project-dir ~/dev/maakie-brainlab
 USAGE
 }
 
@@ -239,6 +243,201 @@ USAGE
   gh run watch "$run_id" -R "$repo" --exit-status
 }
 
+quote_words() {
+  local out=""
+  local q=""
+  local arg
+  for arg in "$@"; do
+    printf -v q "%q" "$arg"
+    if [[ -z "$out" ]]; then
+      out="$q"
+    else
+      out="$out $q"
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
+default_remote_project_dir() {
+  local root
+  local name
+  root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  name="$(basename "$root")"
+  printf '%s\n' "~/dev/$name"
+}
+
+run_remote_ci_self() {
+  local host="$1"
+  local project_dir="$2"
+  local remote_cli="$3"
+  shift 3
+  local remote_args=("$@")
+  local remote_args_q
+  local script_q
+  local remote_script
+
+  remote_args_q="$(quote_words "${remote_args[@]}")"
+  printf -v remote_script 'set -euo pipefail; cd %q; %q %s' "$project_dir" "$remote_cli" "$remote_args_q"
+  script_q="$(quote_words "$remote_script")"
+  echo "OK: ssh host=$host dir=$project_dir cmd=$remote_cli ${remote_args[*]}"
+  ssh "$host" "bash -lc $script_q"
+}
+
+cmd_remote_register() {
+  local host=""
+  local project_dir=""
+  local remote_cli="ci-self"
+  local repo=""
+  local labels=""
+  local runner_name=""
+  local runner_group=""
+  local discord_webhook_url=""
+  local force_workflow=0
+  local skip_workflow=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="${2:-}"; shift 2 ;;
+      --project-dir) project_dir="${2:-}"; shift 2 ;;
+      --remote-cli) remote_cli="${2:-}"; shift 2 ;;
+      --repo) repo="${2:-}"; shift 2 ;;
+      --labels) labels="${2:-}"; shift 2 ;;
+      --runner-name) runner_name="${2:-}"; shift 2 ;;
+      --runner-group) runner_group="${2:-}"; shift 2 ;;
+      --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
+      --force-workflow) force_workflow=1; shift ;;
+      --skip-workflow) skip_workflow=1; shift ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self remote-register --host <ssh-host> [--project-dir path] [--repo owner/repo] [--remote-cli path]
+                               [--labels csv] [--runner-name name] [--runner-group name]
+                               [--discord-webhook-url url] [--force-workflow] [--skip-workflow]
+USAGE
+        return 0
+        ;;
+      *)
+        echo "ERROR: unknown option for remote-register: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  if [[ -z "$project_dir" ]]; then
+    project_dir="$(default_remote_project_dir)"
+  fi
+
+  local args=(register)
+  [[ -n "$repo" ]] && args+=(--repo "$repo")
+  [[ -n "$labels" ]] && args+=(--labels "$labels")
+  [[ -n "$runner_name" ]] && args+=(--runner-name "$runner_name")
+  [[ -n "$runner_group" ]] && args+=(--runner-group "$runner_group")
+  [[ -n "$discord_webhook_url" ]] && args+=(--discord-webhook-url "$discord_webhook_url")
+  [[ "$force_workflow" -eq 1 ]] && args+=(--force-workflow)
+  [[ "$skip_workflow" -eq 1 ]] && args+=(--skip-workflow)
+
+  run_remote_ci_self "$host" "$project_dir" "$remote_cli" "${args[@]}"
+}
+
+cmd_remote_run_focus() {
+  local host=""
+  local project_dir=""
+  local remote_cli="ci-self"
+  local repo=""
+  local ref="main"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="${2:-}"; shift 2 ;;
+      --project-dir) project_dir="${2:-}"; shift 2 ;;
+      --remote-cli) remote_cli="${2:-}"; shift 2 ;;
+      --repo) repo="${2:-}"; shift 2 ;;
+      --ref) ref="${2:-}"; shift 2 ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self remote-run-focus --host <ssh-host> [--project-dir path] [--repo owner/repo] [--ref branch] [--remote-cli path]
+USAGE
+        return 0
+        ;;
+      *)
+        echo "ERROR: unknown option for remote-run-focus: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  if [[ -z "$project_dir" ]]; then
+    project_dir="$(default_remote_project_dir)"
+  fi
+
+  local args=(run-focus --ref "$ref")
+  [[ -n "$repo" ]] && args+=(--repo "$repo")
+  run_remote_ci_self "$host" "$project_dir" "$remote_cli" "${args[@]}"
+}
+
+cmd_remote_up() {
+  local host=""
+  local project_dir=""
+  local remote_cli="ci-self"
+  local repo=""
+  local ref="main"
+  local labels=""
+  local runner_name=""
+  local runner_group=""
+  local discord_webhook_url=""
+  local force_workflow=0
+  local skip_workflow=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="${2:-}"; shift 2 ;;
+      --project-dir) project_dir="${2:-}"; shift 2 ;;
+      --remote-cli) remote_cli="${2:-}"; shift 2 ;;
+      --repo) repo="${2:-}"; shift 2 ;;
+      --ref) ref="${2:-}"; shift 2 ;;
+      --labels) labels="${2:-}"; shift 2 ;;
+      --runner-name) runner_name="${2:-}"; shift 2 ;;
+      --runner-group) runner_group="${2:-}"; shift 2 ;;
+      --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
+      --force-workflow) force_workflow=1; shift ;;
+      --skip-workflow) skip_workflow=1; shift ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self remote-up --host <ssh-host> [--project-dir path] [--repo owner/repo] [--ref branch]
+                         [--remote-cli path] [--labels csv] [--runner-name name]
+                         [--runner-group name] [--discord-webhook-url url]
+                         [--force-workflow] [--skip-workflow]
+USAGE
+        return 0
+        ;;
+      *)
+        echo "ERROR: unknown option for remote-up: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  if [[ -z "$project_dir" ]]; then
+    project_dir="$(default_remote_project_dir)"
+  fi
+
+  local register_args=(--host "$host" --project-dir "$project_dir" --remote-cli "$remote_cli")
+  [[ -n "$repo" ]] && register_args+=(--repo "$repo")
+  [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+  [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
+  [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
+  [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
+  [[ "$force_workflow" -eq 1 ]] && register_args+=(--force-workflow)
+  [[ "$skip_workflow" -eq 1 ]] && register_args+=(--skip-workflow)
+  cmd_remote_register "${register_args[@]}"
+
+  local run_focus_args=(--host "$host" --project-dir "$project_dir" --remote-cli "$remote_cli" --ref "$ref")
+  [[ -n "$repo" ]] && run_focus_args+=(--repo "$repo")
+  cmd_remote_run_focus "${run_focus_args[@]}"
+}
+
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -246,6 +445,9 @@ main() {
     register) cmd_register "$@" ;;
     run-watch) cmd_run_watch "$@" ;;
     run-focus) cmd_run_watch --all-green --sync-pr-template "$@" ;;
+    remote-register) cmd_remote_register "$@" ;;
+    remote-run-focus) cmd_remote_run_focus "$@" ;;
+    remote-up) cmd_remote_up "$@" ;;
     watch) cmd_watch "$@" ;;
     help|-h|--help) usage ;;
     *)

@@ -33,18 +33,18 @@ ci-self run-focus
 ### ローカルネットワーク編（MacBook -> 同一LANの Mac mini）
 
 ```bash
-ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self register'
-ssh <mac-mini-host> 'cd ~/dev/maakie-brainlab && ci-self run-focus'
+cd ~/dev/maakie-brainlab
+ci-self remote-up --host <mac-mini-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
 ```
 
 ### リモートネットワーク編（外出先）
 
 ```bash
-# どこからでも dispatch + All Green確認 + PRテンプレ同期
-ci-self run-focus --repo mt4110/maakie-brainlab --ref main
+# どこからでも (SSHあり): Mac mini 上で register + run-focus を1コマンド実行
+ci-self remote-up --host <mac-mini-remote-host> --project-dir ~/dev/maakie-brainlab --repo mt4110/maakie-brainlab
 
-# queued で詰まった時だけ、Mac mini 側を復旧
-ssh <mac-mini-remote-host> 'colima status || colima start'
+# どこからでも (SSHなし): dispatch + All Green確認 + PRテンプレ同期のみ実行
+ci-self run-focus --repo mt4110/maakie-brainlab --ref main
 ```
 
 `ci-self register` が実施すること:
@@ -62,7 +62,18 @@ ssh <mac-mini-remote-host> 'colima status || colima start'
 3. PR checks を All Green まで watch
 4. PRテンプレートを検出して PR title/body を自動同期（テンプレートがある場合）
 
+`ci-self remote-up` が実施すること:
+
+1. SSH で Mac mini に接続
+2. `ci-self register` を実行
+3. `ci-self run-focus` を実行
+
 これで `Copilot review` / `Codex review` に集中できます。
+
+補足:
+
+- `remote-*` は接続先Macに `ci-self`（`bash ops/ci/install_cli.sh` 実行済み）が必要です
+- `--project-dir` 未指定時は `~/dev/<現在のリポジトリ名>` を使います
 
 ## Production QuickStart（実稼働用）
 
@@ -238,16 +249,14 @@ gh api repos/<owner/repo>/actions/runners --jq '.runners[] | {name,status,busy}'
 外出先から検証を流す:
 
 ```bash
-gh workflow run verify.yml --ref main -R <owner/repo>
-RUN_ID="$(gh run list --workflow verify.yml -R <owner/repo> --limit 1 --json databaseId --jq '.[0].databaseId')"
-gh run watch "$RUN_ID" -R <owner/repo> --exit-status
+ci-self run-focus --repo <owner/repo> --ref main
 ```
 
 runner が offline / colima停止で失敗した場合の復旧例（SSH可能時）:
 
 ```bash
-ssh <mac-mini-host> 'colima status || colima start'
-ssh <mac-mini-host> 'cd ~/dev/ci-self-runner && gh api repos/<owner/repo>/actions/runners --jq ".runners[] | {name,status}"'
+ci-self remote-register --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo>
+ci-self remote-run-focus --host <mac-mini-host> --project-dir ~/dev/<repo> --repo <owner/repo> --ref main
 ```
 
 ## ローカル/リモート実行
