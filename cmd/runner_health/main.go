@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,10 @@ type checkResult struct {
 	detail string
 }
 
+type options struct {
+	repoDir string
+}
+
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -23,6 +29,14 @@ func main() {
 			fmt.Println("STATUS: ERROR")
 		}
 	}()
+
+	opts, err := parseOptions(os.Args[1:])
+	if err != nil {
+		writeStatus("ERROR", "invalid_args="+err.Error(), nil)
+		fmt.Printf("ERROR: runner_health invalid_args=%s\n", err.Error())
+		fmt.Println("STATUS: ERROR")
+		os.Exit(2)
+	}
 
 	fmt.Println("OK: runner_health start")
 
@@ -45,6 +59,7 @@ func main() {
 	results = append(results, checkDiskDir("out"))
 	results = append(results, checkDiskDir(".local"))
 	results = append(results, checkDiskDir("cache"))
+	results = append(results, checkNixForRepo(opts.repoDir))
 
 	// Print results and determine overall status
 	for _, r := range results {
@@ -56,6 +71,20 @@ func main() {
 
 	writeStatus(overallStatus, "", results)
 	fmt.Printf("STATUS: %s\n", overallStatus)
+}
+
+func parseOptions(args []string) (options, error) {
+	opts := options{}
+	fs := flag.NewFlagSet("runner_health", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.repoDir, "repo-dir", "", "target repository directory for context-aware checks")
+	if err := fs.Parse(args); err != nil {
+		return options{}, err
+	}
+	if fs.NArg() > 0 {
+		return options{}, fmt.Errorf("unexpected_args=%s", strings.Join(fs.Args(), ","))
+	}
+	return opts, nil
 }
 
 func checkCommand(name, bin string, args ...string) checkResult {
@@ -155,6 +184,86 @@ func checkDiskDir(dir string) checkResult {
 		name:   "disk_" + dir,
 		status: st,
 		detail: detail,
+	}
+}
+
+func checkNixForRepo(repoDir string) checkResult {
+	if strings.TrimSpace(repoDir) == "" {
+		return checkResult{
+			name:   "nix",
+			status: "SKIP",
+			detail: "reason=repo_dir_not_set",
+		}
+	}
+
+	flakePath := filepath.Join(repoDir, "flake.nix")
+	fi, err := os.Stat(flakePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return checkResult{
+				name:   "nix",
+				status: "SKIP",
+				detail: "reason=not_required(no_flake)",
+			}
+		}
+		return checkResult{
+			name:   "nix",
+			status: "ERROR",
+			detail: "reason=flake_stat_failed(" + err.Error() + ")",
+		}
+	}
+	if fi.IsDir() {
+		return checkResult{
+			name:   "nix",
+			status: "ERROR",
+			detail: "reason=flake_not_file",
+		}
+	}
+
+	// flake.nix exists => nix is required.
+	if p, err := exec.LookPath("nix"); err == nil {
+		return checkResult{
+			name:   "nix",
+			status: "OK",
+			detail: "reason=available path=" + p,
+		}
+	}
+
+	defaultProfileBin := "/nix/var/nix/profiles/default/bin/nix"
+	if _, err := os.Stat(defaultProfileBin); err == nil {
+		return checkResult{
+			name:   "nix",
+			status: "OK",
+			detail: "reason=available_via_default_profile path=" + defaultProfileBin,
+		}
+	}
+
+	user := strings.TrimSpace(os.Getenv("USER"))
+	if user == "" {
+		user = "unknown"
+	}
+	perUserBin := filepath.Join("/nix/var/nix/profiles/per-user", user, "profile/bin/nix")
+	if _, err := os.Stat(perUserBin); err == nil {
+		return checkResult{
+			name:   "nix",
+			status: "OK",
+			detail: "reason=available_via_user_profile path=" + perUserBin,
+		}
+	}
+
+	daemonProfile := "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
+	if _, err := os.Stat(daemonProfile); err == nil {
+		return checkResult{
+			name:   "nix",
+			status: "ERROR",
+			detail: "reason=not_in_path profile=" + daemonProfile,
+		}
+	}
+
+	return checkResult{
+		name:   "nix",
+		status: "ERROR",
+		detail: "reason=not_installed",
 	}
 }
 

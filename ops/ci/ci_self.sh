@@ -46,6 +46,20 @@ expand_local_path() {
   fi
 }
 
+run_go_cmd() {
+  if command -v go >/dev/null 2>&1; then
+    if go "$@"; then
+      return 0
+    fi
+    echo "WARN: go command failed; retrying via mise" >&2
+  fi
+  if command -v mise >/dev/null 2>&1; then
+    mise x -- go "$@"
+    return $?
+  fi
+  return 127
+}
+
 unquote_value() {
   local v="$1"
   local n="${#v}"
@@ -171,6 +185,30 @@ resolve_ref() {
 
 current_branch() {
   git branch --show-current
+}
+
+ensure_verify_workflow_nix_compat() {
+  local project_dir="${1:-}"
+  [[ -z "$project_dir" ]] && return 0
+  [[ -d "$project_dir" ]] || return 0
+
+  if [[ ! -f "$project_dir/flake.nix" ]]; then
+    return 0
+  fi
+
+  local wf="$project_dir/.github/workflows/verify.yml"
+  if [[ ! -f "$wf" ]]; then
+    echo "ERROR: verify workflow not found for flake repo: $wf" >&2
+    echo "HINT: bash $ROOT_DIR/ops/ci/scaffold_verify_workflow.sh --repo $project_dir --apply" >&2
+    return 1
+  fi
+
+  if ! grep -Fq "nix-daemon.sh" "$wf"; then
+    echo "ERROR: verify.yml is outdated for nix runner env: $wf" >&2
+    echo "HINT: bash $ROOT_DIR/ops/ci/scaffold_verify_workflow.sh --repo $project_dir --apply --force" >&2
+    echo "HINT: commit/push updated verify.yml, then rerun ci-self" >&2
+    return 1
+  fi
 }
 
 resolve_pr_number() {
@@ -388,6 +426,8 @@ USAGE
   project_dir="$(expand_local_path "$project_dir")"
   [[ -z "$ref" ]] && ref="$(resolve_ref "$ref")"
   repo="$(resolve_repo "$repo")"
+  ensure_verify_workflow_nix_compat "$project_dir"
+
   gh workflow run verify.yml --ref "$ref" -R "$repo"
   local run_id
   run_id="$(gh run list --workflow verify.yml -R "$repo" --limit 1 --json databaseId --jq '.[0].databaseId')"
@@ -576,16 +616,18 @@ USAGE
 
 cmd_doctor() {
   local repo=""
+  local repo_dir="$PWD"
   local fix=0
   local verbose=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) repo="${2:-}"; shift 2 ;;
+      --repo-dir) repo_dir="${2:-}"; shift 2 ;;
       --fix) fix=1; shift ;;
       --verbose) verbose=1; shift ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self doctor [--repo owner/repo] [--fix] [--verbose]
+Usage: ci-self doctor [--repo owner/repo] [--repo-dir path] [--fix] [--verbose]
 USAGE
         return 0
         ;;
@@ -595,6 +637,10 @@ USAGE
         ;;
     esac
   done
+
+  [[ -z "$repo_dir" ]] && repo_dir="$PWD"
+  [[ -n "$CONFIG_PROJECT_DIR" && "$repo_dir" == "$PWD" ]] && repo_dir="$CONFIG_PROJECT_DIR"
+  repo_dir="$(expand_local_path "$repo_dir")"
 
   local failed=0
   local item=""
@@ -664,12 +710,8 @@ USAGE
     else
       if [[ "$fix" -eq 1 ]]; then
         echo "OK: doctor fix=runner_setup repo=$repo"
-        if command -v go >/dev/null 2>&1; then
-          go run ./cmd/runner_setup --apply --repo "$repo"
-        elif command -v mise >/dev/null 2>&1; then
-          mise x -- go run ./cmd/runner_setup --apply --repo "$repo"
-        else
-          echo "ERROR: doctor fix=runner_setup reason=go_missing"
+        if ! run_go_cmd run ./cmd/runner_setup --apply --repo "$repo"; then
+          echo "ERROR: doctor fix=runner_setup reason=runner_setup_failed"
           failed=1
         fi
         online_count="$(gh api "repos/$repo/actions/runners" --jq '[.runners[] | select(.status=="online")] | length' 2>/dev/null || echo "0")"
@@ -686,24 +728,18 @@ USAGE
     fi
   fi
 
-  if command -v go >/dev/null 2>&1; then
-    if go run ./cmd/runner_health >/dev/null 2>&1; then
-      echo "OK: doctor check=runner_health reason=ok"
-    else
-      echo "ERROR: doctor check=runner_health reason=failed"
-      [[ "$verbose" -eq 1 ]] && go run ./cmd/runner_health || true
-      failed=1
-    fi
-  elif command -v mise >/dev/null 2>&1; then
-    if mise x -- go run ./cmd/runner_health >/dev/null 2>&1; then
-      echo "OK: doctor check=runner_health reason=ok"
-    else
-      echo "ERROR: doctor check=runner_health reason=failed"
-      [[ "$verbose" -eq 1 ]] && mise x -- go run ./cmd/runner_health || true
-      failed=1
-    fi
+  if run_go_cmd run ./cmd/runner_health --repo-dir "$repo_dir" >/dev/null 2>&1; then
+    echo "OK: doctor check=runner_health reason=ok"
   else
-    echo "ERROR: doctor check=go reason=missing_go_and_mise"
+    if [[ "$verbose" -eq 1 ]]; then
+      echo "ERROR: doctor check=runner_health reason=failed"
+      run_go_cmd run ./cmd/runner_health --repo-dir "$repo_dir" || true
+    else
+      echo "ERROR: doctor check=runner_health reason=failed"
+    fi
+    if ! command -v go >/dev/null 2>&1 && ! command -v mise >/dev/null 2>&1; then
+      echo "ERROR: doctor check=go reason=missing_go_and_mise"
+    fi
     failed=1
   fi
 

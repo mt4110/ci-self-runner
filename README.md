@@ -20,6 +20,9 @@ ci-self up
 
 - `ci-self up` は `register + run-focus` を連続実行
 - `verify.yml` / PRテンプレートが無ければ自動雛形を生成
+- 対象リポジトリに `flake.nix` がある場合、runner マシンに `nix` の事前インストールが必要
+  - `ci-self` / `verify.yml` は `nix-daemon.sh` を自動読み込みして `nix` を検出（毎回の手動 `source` は不要）
+  - 既存の `verify.yml` が古い場合は `bash ops/ci/scaffold_verify_workflow.sh --repo <target> --apply --force` で更新
 
 ## ネットワーク別の最短
 
@@ -69,6 +72,7 @@ CI_SELF_PR_BASE=main
 - `ci-self up`: ローカル最短（register + run-focus）
 - `ci-self focus`: run-focus 後、PR未作成なら自動作成し checks を監視
 - `ci-self doctor --fix`: 依存/gh auth/colima/docker/runner_health を診断し可能な範囲で修復
+- `ci-self doctor --repo-dir <path>`: `flake.nix` リポジトリの Nix 到達性も含めて診断
 - `ci-self remote-up`: SSH先で register + run-focus
 - `ci-self config-init`: `.ci-self.env` テンプレート生成
 
