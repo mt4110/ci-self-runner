@@ -31,21 +31,37 @@ ci-self config-init
 CI_SELF_REPO=mt4110/maakie-brainlab
 CI_SELF_REF=main
 CI_SELF_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
-CI_SELF_REMOTE_HOST=mac-mini.local
-CI_SELF_REMOTE_PROJECT_DIR=~/dev/maakie-brainlab
+CI_SELF_REMOTE_HOST=<you>@mac-mini.local
+CI_SELF_REMOTE_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
 CI_SELF_PR_BASE=main
 ```
 
 ## ネットワーク別ワンコマンド
 
-同一LAN / 外出先（SSHあり）:
+同一LAN / 外出先（SSHあり, 推奨）:
+
+```bash
+ci-self remote-ci
+```
+
+`remote-ci` は以下を 1 コマンドで実行します:
+
+1. SSH 鍵認証チェック（password不可）
+2. ローカル変更を Mac mini に `rsync` 同期
+3. Mac mini 側 verify 実行
+4. `out/remote/<host>/` へ結果回収
+
+未設定なら `--host --project-dir --repo` を明示してください。
+
+```bash
+ci-self remote-ci --host <user>@<mac-mini> --project-dir '~/dev/maakie-brainlab' --repo mt4110/maakie-brainlab
+```
+
+runner 初期化/復旧専用の旧導線:
 
 ```bash
 ci-self remote-up
 ```
-
-`remote-up` は `.ci-self.env` の `CI_SELF_REMOTE_HOST` などが設定済みの場合の最短です。
-未設定なら `--host --project-dir --repo` を明示してください。
 
 外出先（SSHなし）:
 

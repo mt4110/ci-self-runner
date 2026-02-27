@@ -138,6 +138,7 @@ Commands:
   register   One-command runner registration for current repo
   run-watch  One-command verify workflow dispatch + watch
   run-focus  run-watch + All Green check + PR template sync
+  remote-ci        Key-only SSH + sync + remote verify + fetch results
   remote-register  Run `register` over SSH on remote host
   remote-run-focus Run `run-focus` over SSH on remote host
   remote-up        Run `remote-register` + `remote-run-focus` in one command
@@ -153,6 +154,7 @@ Examples:
   ci-self register
   ci-self run-watch
   ci-self run-focus
+  ci-self remote-ci --host <user>@<mac-mini> --project-dir '~/dev/maakie-brainlab'
   ci-self remote-up --host mac-mini.local --project-dir ~/dev/maakie-brainlab
 USAGE
 }
@@ -208,6 +210,63 @@ ensure_verify_workflow_nix_compat() {
     echo "HINT: bash $ROOT_DIR/ops/ci/scaffold_verify_workflow.sh --repo $project_dir --apply --force" >&2
     echo "HINT: commit/push updated verify.yml, then rerun ci-self" >&2
     return 1
+  fi
+}
+
+resolve_verify_workflow_id() {
+  local repo="$1"
+  local workflows=""
+  local id=""
+  local path=""
+  local name=""
+  local lc_path=""
+  local lc_name=""
+  local verify_yaml_id=""
+  local verify_name_id=""
+  local verify_path_id=""
+
+  workflows="$(gh api "repos/$repo/actions/workflows" --jq '.workflows[]? | [.id, (.path // ""), (.name // "")] | @tsv')" || return 1
+
+  while IFS=$'\t' read -r id path name; do
+    [[ -n "$id" ]] || continue
+    lc_path="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+    lc_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$lc_path" == ".github/workflows/verify.yml" ]]; then
+      printf '%s\n' "$id"
+      return 0
+    fi
+    [[ -z "$verify_yaml_id" && "$lc_path" == ".github/workflows/verify.yaml" ]] && verify_yaml_id="$id"
+    [[ -z "$verify_name_id" && "$lc_name" == "verify" ]] && verify_name_id="$id"
+    [[ -z "$verify_path_id" && "$lc_path" == *"/verify."* ]] && verify_path_id="$id"
+  done <<< "$workflows"
+
+  if [[ -n "$verify_yaml_id" ]]; then
+    printf '%s\n' "$verify_yaml_id"
+    return 0
+  fi
+  if [[ -n "$verify_name_id" ]]; then
+    printf '%s\n' "$verify_name_id"
+    return 0
+  fi
+  if [[ -n "$verify_path_id" ]]; then
+    printf '%s\n' "$verify_path_id"
+    return 0
+  fi
+}
+
+print_verify_workflow_missing_hint() {
+  local repo="$1"
+  local project_dir="${2:-}"
+  echo "ERROR: verify workflow not found in remote repo ($repo)" >&2
+  echo "HINT: expected .github/workflows/verify.yml (or verify.yaml) in $repo" >&2
+  if [[ -n "$project_dir" && -d "$project_dir" ]]; then
+    if [[ -f "$project_dir/.github/workflows/verify.yml" || -f "$project_dir/.github/workflows/verify.yaml" ]]; then
+      echo "HINT: local workflow exists in $project_dir/.github/workflows; commit/push then rerun ci-self" >&2
+    else
+      echo "HINT: bash $ROOT_DIR/ops/ci/scaffold_verify_workflow.sh --repo $project_dir --apply" >&2
+      echo "HINT: commit/push generated .github/workflows/verify.yml, then rerun ci-self" >&2
+    fi
   fi
 }
 
@@ -428,10 +487,17 @@ USAGE
   repo="$(resolve_repo "$repo")"
   ensure_verify_workflow_nix_compat "$project_dir"
 
-  gh workflow run verify.yml --ref "$ref" -R "$repo"
+  local workflow_id=""
+  workflow_id="$(resolve_verify_workflow_id "$repo")"
+  if [[ -z "$workflow_id" ]]; then
+    print_verify_workflow_missing_hint "$repo" "$project_dir"
+    return 1
+  fi
+
+  gh workflow run "$workflow_id" --ref "$ref" -R "$repo"
   local run_id
-  run_id="$(gh run list --workflow verify.yml -R "$repo" --limit 1 --json databaseId --jq '.[0].databaseId')"
-  [[ -n "$run_id" ]] || { echo "ERROR: failed to resolve verify run id" >&2; return 1; }
+  run_id="$(gh run list --workflow "$workflow_id" -R "$repo" --limit 1 --json databaseId --jq '.[0].databaseId')"
+  [[ -n "$run_id" ]] || { echo "ERROR: failed to resolve verify run id (workflow=$workflow_id)" >&2; return 1; }
   gh run watch "$run_id" -R "$repo" --exit-status
 
   if [[ "$all_green" -eq 1 || "$sync_pr_template" -eq 1 ]]; then
@@ -472,7 +538,13 @@ USAGE
   done
   repo="$(resolve_repo "$repo")"
   if [[ -z "$run_id" ]]; then
-    run_id="$(gh run list --workflow verify.yml -R "$repo" --limit 1 --json databaseId --jq '.[0].databaseId')"
+    local workflow_id=""
+    workflow_id="$(resolve_verify_workflow_id "$repo")"
+    if [[ -z "$workflow_id" ]]; then
+      print_verify_workflow_missing_hint "$repo"
+      return 1
+    fi
+    run_id="$(gh run list --workflow "$workflow_id" -R "$repo" --limit 1 --json databaseId --jq '.[0].databaseId')"
   fi
   [[ -n "$run_id" ]] || { echo "ERROR: failed to resolve verify run id" >&2; return 1; }
   gh run watch "$run_id" -R "$repo" --exit-status
@@ -838,6 +910,154 @@ default_remote_project_dir() {
   printf '%s\n' "~/dev/$name"
 }
 
+default_local_project_dir() {
+  if [[ -n "$CONFIG_PROJECT_DIR" ]]; then
+    printf '%s\n' "$CONFIG_PROJECT_DIR"
+    return
+  fi
+  git rev-parse --show-toplevel 2>/dev/null || pwd
+}
+
+sanitize_for_path_segment() {
+  local raw="$1"
+  local out
+  out="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
+  out="${out#-}"
+  out="${out%-}"
+  [[ -z "$out" ]] && out="remote"
+  printf '%s\n' "$out"
+}
+
+remote_path_for_shell() {
+  local path="$1"
+  if [[ "$path" == "~/"* ]]; then
+    printf '\$HOME/%s\n' "${path#~/}"
+  else
+    printf '%q\n' "$path"
+  fi
+}
+
+run_remote_command_in_dir() {
+  local host="$1"
+  local project_dir="$2"
+  shift 2
+  local remote_cmd_q
+  local script_q
+  local remote_script
+  local remote_cd_q
+
+  remote_cmd_q="$(quote_words "$@")"
+  remote_cd_q="$(remote_path_for_shell "$project_dir")"
+  printf -v remote_script 'set -euo pipefail; cd %s; %s' "$remote_cd_q" "$remote_cmd_q"
+  script_q="$(quote_words "$remote_script")"
+  echo "OK: ssh host=$host dir=$project_dir cmd=$*"
+  ssh "$host" "bash -lc $script_q"
+}
+
+first_existing_public_key() {
+  local key=""
+  for key in \
+    "$HOME/.ssh/id_ed25519.pub" \
+    "$HOME/.ssh/id_ecdsa.pub" \
+    "$HOME/.ssh/id_rsa.pub"; do
+    if [[ -f "$key" ]]; then
+      printf '%s\n' "$key"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_ssh_key_auth() {
+  local host="$1"
+  if ssh -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "$host" "true" >/dev/null 2>&1; then
+    echo "OK: ssh key_auth host=$host"
+    return 0
+  fi
+
+  echo "ERROR: ssh key-based auth failed for host=$host" >&2
+  local pub_key=""
+  pub_key="$(first_existing_public_key || true)"
+  if [[ -n "$pub_key" ]]; then
+    echo "HINT: register your public key to remote ~/.ssh/authorized_keys" >&2
+    echo "HINT: cat $pub_key | ssh $host 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'" >&2
+  else
+    echo "HINT: generate a key first: ssh-keygen -t ed25519 -a 100" >&2
+  fi
+  return 1
+}
+
+ensure_remote_project_dir() {
+  local host="$1"
+  local project_dir="$2"
+  local remote_dir_q
+  local script_q
+  local remote_script
+
+  remote_dir_q="$(remote_path_for_shell "$project_dir")"
+  printf -v remote_script 'set -euo pipefail; mkdir -p %s' "$remote_dir_q"
+  script_q="$(quote_words "$remote_script")"
+  echo "OK: ssh host=$host ensure_dir=$project_dir"
+  ssh "$host" "bash -lc $script_q"
+}
+
+sync_local_project_to_remote() {
+  local local_dir="$1"
+  local host="$2"
+  local project_dir="$3"
+  echo "OK: rsync host=$host src=$local_dir dst=$project_dir"
+  rsync -az --delete \
+    --exclude ".local/" \
+    --exclude "out/" \
+    --exclude "cache/" \
+    --exclude ".DS_Store" \
+    "$local_dir/" "$host:$project_dir/"
+}
+
+fetch_remote_verify_artifacts() {
+  local host="$1"
+  local project_dir="$2"
+  local out_dir="$3"
+
+  mkdir -p "$out_dir" "$out_dir/logs"
+  local failed=0
+
+  if rsync -a "$host:$project_dir/out/verify-full.status" "$out_dir/"; then
+    echo "OK: fetch status_file=$out_dir/verify-full.status"
+  else
+    echo "ERROR: fetch status_file failed host=$host path=$project_dir/out/verify-full.status" >&2
+    failed=1
+  fi
+
+  if rsync -a "$host:$project_dir/out/logs/" "$out_dir/logs/"; then
+    echo "OK: fetch logs_dir=$out_dir/logs"
+  else
+    echo "ERROR: fetch logs failed host=$host path=$project_dir/out/logs/" >&2
+    failed=1
+  fi
+
+  return "$failed"
+}
+
+read_verify_status_file() {
+  local status_file="$1"
+  if [[ ! -f "$status_file" ]]; then
+    return 0
+  fi
+  if grep -q "status=OK" "$status_file"; then
+    echo "OK"
+    return 0
+  fi
+  if grep -q "status=ERROR" "$status_file"; then
+    echo "ERROR"
+    return 0
+  fi
+  if grep -q "status=SKIP" "$status_file"; then
+    echo "SKIP"
+    return 0
+  fi
+}
+
 run_remote_ci_self() {
   local host="$1"
   local project_dir="$2"
@@ -859,6 +1079,139 @@ run_remote_ci_self() {
   script_q="$(quote_words "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=$remote_cli ${remote_args[*]}"
   ssh "$host" "bash -lc $script_q"
+}
+
+cmd_remote_ci() {
+  local host=""
+  local project_dir=""
+  local local_dir=""
+  local out_dir=""
+  local remote_cli="ci-self"
+  local repo=""
+  local labels=""
+  local runner_name=""
+  local runner_group=""
+  local discord_webhook_url=""
+  local skip_bootstrap=0
+  local no_sync=0
+  local verify_dry_run=1
+  local verify_gha_sync=1
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="${2:-}"; shift 2 ;;
+      --project-dir) project_dir="${2:-}"; shift 2 ;;
+      --local-dir) local_dir="${2:-}"; shift 2 ;;
+      --out-dir) out_dir="${2:-}"; shift 2 ;;
+      --remote-cli) remote_cli="${2:-}"; shift 2 ;;
+      --repo) repo="${2:-}"; shift 2 ;;
+      --labels) labels="${2:-}"; shift 2 ;;
+      --runner-name) runner_name="${2:-}"; shift 2 ;;
+      --runner-group) runner_group="${2:-}"; shift 2 ;;
+      --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
+      --verify-dry-run) verify_dry_run="$(config_bool_to_int "${2:-}")"; shift 2 ;;
+      --verify-gha-sync) verify_gha_sync="$(config_bool_to_int "${2:-}")"; shift 2 ;;
+      --skip-bootstrap) skip_bootstrap=1; shift ;;
+      --no-sync) no_sync=1; shift ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self remote-ci --host <ssh-host> [--project-dir path] [--local-dir path] [--out-dir path]
+                         [--repo owner/repo] [--remote-cli path]
+                         [--labels csv] [--runner-name name] [--runner-group name]
+                         [--discord-webhook-url url]
+                         [--verify-dry-run 0|1] [--verify-gha-sync 0|1]
+                         [--skip-bootstrap] [--no-sync]
+USAGE
+        return 0
+        ;;
+      *)
+        echo "ERROR: unknown option for remote-ci: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  [[ -z "$host" ]] && host="$CONFIG_REMOTE_HOST"
+  [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
+  [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
+  [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
+  [[ -z "$runner_name" && -n "$CONFIG_RUNNER_NAME" ]] && runner_name="$CONFIG_RUNNER_NAME"
+  [[ -z "$runner_group" && -n "$CONFIG_RUNNER_GROUP" ]] && runner_group="$CONFIG_RUNNER_GROUP"
+  [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
+
+  [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  [[ -z "$project_dir" ]] && project_dir="$(default_remote_project_dir)"
+  [[ -z "$local_dir" ]] && local_dir="$(default_local_project_dir)"
+  local_dir="$(expand_local_path "$local_dir")"
+  [[ -d "$local_dir" ]] || { echo "ERROR: --local-dir not found: $local_dir" >&2; return 2; }
+
+  if [[ -z "$out_dir" ]]; then
+    out_dir="$local_dir/out/remote/$(sanitize_for_path_segment "$host")"
+  fi
+  out_dir="$(expand_local_path "$out_dir")"
+
+  command -v ssh >/dev/null 2>&1 || { echo "ERROR: ssh command not found" >&2; return 1; }
+  command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync command not found" >&2; return 1; }
+
+  ensure_ssh_key_auth "$host"
+  ensure_remote_project_dir "$host" "$project_dir"
+
+  if [[ "$no_sync" -eq 1 ]]; then
+    echo "SKIP: sync reason=no_sync_flag"
+  else
+    sync_local_project_to_remote "$local_dir" "$host" "$project_dir"
+  fi
+
+  if [[ "$skip_bootstrap" -eq 1 ]]; then
+    echo "SKIP: bootstrap reason=skip_bootstrap_flag"
+  elif [[ -z "$repo" ]]; then
+    echo "SKIP: bootstrap reason=repo_not_set"
+  else
+    local register_args=(register --repo "$repo" --repo-dir "$project_dir" --skip-workflow --skip-dispatch)
+    [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+    [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
+    [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
+    [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
+    if ! run_remote_ci_self "$host" "$project_dir" "$remote_cli" "${register_args[@]}"; then
+      echo "WARN: bootstrap failed; continuing standalone verify" >&2
+    fi
+  fi
+
+  local sha=""
+  local ref=""
+  sha="$(git -C "$local_dir" rev-parse HEAD 2>/dev/null || true)"
+  ref="$(git -C "$local_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [[ "$ref" == "HEAD" ]] && ref=""
+
+  local remote_verify_args=(env "VERIFY_DRY_RUN=$verify_dry_run" "VERIFY_GHA_SYNC=$verify_gha_sync" "GITHUB_ACTIONS=true")
+  [[ -n "$sha" ]] && remote_verify_args+=("GITHUB_SHA=$sha")
+  [[ -n "$ref" ]] && remote_verify_args+=("GITHUB_REF_NAME=$ref")
+  remote_verify_args+=(sh ops/ci/run_verify_full.sh)
+
+  local verify_failed=0
+  if ! run_remote_command_in_dir "$host" "$project_dir" "${remote_verify_args[@]}"; then
+    echo "ERROR: remote verify command failed" >&2
+    verify_failed=1
+  fi
+
+  local fetch_failed=0
+  if ! fetch_remote_verify_artifacts "$host" "$project_dir" "$out_dir"; then
+    fetch_failed=1
+  fi
+
+  local status_file="$out_dir/verify-full.status"
+  local verify_status=""
+  verify_status="$(read_verify_status_file "$status_file")"
+  if [[ -z "$verify_status" ]]; then
+    echo "ERROR: verify status missing in $status_file" >&2
+    return 1
+  fi
+
+  echo "OK: remote-ci result status=$verify_status status_file=$status_file"
+  if [[ "$verify_failed" -eq 1 || "$fetch_failed" -eq 1 || "$verify_status" != "OK" ]]; then
+    return 1
+  fi
+  return 0
 }
 
 cmd_remote_register() {
@@ -1053,6 +1406,7 @@ main() {
     register) cmd_register "$@" ;;
     run-watch) cmd_run_watch "$@" ;;
     run-focus) cmd_run_watch --all-green --sync-pr-template "$@" ;;
+    remote-ci) cmd_remote_ci "$@" ;;
     remote-register) cmd_remote_register "$@" ;;
     remote-run-focus) cmd_remote_run_focus "$@" ;;
     remote-up) cmd_remote_up "$@" ;;
