@@ -143,8 +143,16 @@ jobs:
       - name: Verify (Nix)
         shell: bash
         run: |
+          if ! command -v nix >/dev/null 2>&1 && [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]]; then
+            # shellcheck disable=SC1091
+            . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          fi
+          if ! command -v nix >/dev/null 2>&1; then
+            export PATH="/nix/var/nix/profiles/default/bin:/nix/var/nix/profiles/per-user/${USER:-$(id -un)}/profile/bin:$PATH"
+          fi
           if ! command -v nix >/dev/null 2>&1; then
             echo "ERROR: nix is required on this runner"
+            echo "HINT: install nix and/or ensure nix-daemon profile exists"
             exit 1
           fi
           nix shell nixpkgs#go nixpkgs#uv nixpkgs#python312 -c env -u GOROOT -u GOTOOLDIR -u GOENV bash -c '
@@ -207,6 +215,12 @@ fi
 mkdir -p "$WORKFLOW_DIR"
 if [[ -f "$WORKFLOW_FILE" && "$FORCE" -ne 1 ]]; then
   echo "SKIP: $WORKFLOW_FILE already exists (use --force to overwrite)"
+  if [[ "$MODE" == "nix" ]]; then
+    if ! grep -Fq "nix-daemon.sh" "$WORKFLOW_FILE"; then
+      echo "WARN: existing verify.yml may not load nix in non-login shells"
+      echo "HINT: rerun with --force to refresh verify.yml template"
+    fi
+  fi
   if [[ "$UPDATE_GITIGNORE" -eq 1 ]]; then
     touch "$GITIGNORE_FILE"
     for entry in ".local/" "out/" "cache/"; do

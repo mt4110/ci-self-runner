@@ -34,8 +34,10 @@ cd "$ROOT_DIR"
 
 run_go() {
   if command -v go >/dev/null 2>&1; then
-    go "$@"
-    return
+    if go "$@"; then
+      return
+    fi
+    echo "WARN: go command failed; retrying via mise" >&2
   fi
   if command -v mise >/dev/null 2>&1; then
     mise x -- go "$@"
@@ -43,6 +45,24 @@ run_go() {
   fi
   echo "ERROR: go not found (install go or mise)" >&2
   exit 1
+}
+
+ensure_nix_on_path() {
+  if command -v nix >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local daemon_profile="/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
+  if [[ -f "$daemon_profile" ]]; then
+    # shellcheck disable=SC1091
+    . "$daemon_profile"
+  fi
+
+  if command -v nix >/dev/null 2>&1; then
+    return 0
+  fi
+
+  export PATH="/nix/var/nix/profiles/default/bin:/nix/var/nix/profiles/per-user/${USER:-$(id -un)}/profile/bin:$PATH"
 }
 
 REPO=""
@@ -116,6 +136,14 @@ if [[ -z "$REPO" ]]; then
   exit 2
 fi
 
+if [[ -n "$REPO_DIR" ]]; then
+  if [[ ! -d "$REPO_DIR" ]]; then
+    echo "ERROR: --repo-dir not found: $REPO_DIR" >&2
+    exit 2
+  fi
+  REPO_DIR="$(cd "$REPO_DIR" && pwd)"
+fi
+
 echo "OK: target_repo=$REPO ref=$REF"
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -134,7 +162,23 @@ fi
 run_go run ./cmd/runner_setup "${runner_setup_args[@]}"
 
 echo "OK: runner_health_start"
-run_go run ./cmd/runner_health
+if [[ -n "$REPO_DIR" ]]; then
+  run_go run ./cmd/runner_health --repo-dir "$REPO_DIR"
+else
+  run_go run ./cmd/runner_health
+fi
+
+if [[ -n "$REPO_DIR" && -f "$REPO_DIR/flake.nix" ]]; then
+  ensure_nix_on_path
+  if ! command -v nix >/dev/null 2>&1; then
+    echo "ERROR: nix is required for flake-based repos (found: $REPO_DIR/flake.nix)" >&2
+    echo "HINT: install nix first, then retry 'ci-self up'" >&2
+    echo "HINT: if installed already, check /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" >&2
+    echo "HINT: https://nixos.org/download/" >&2
+    exit 1
+  fi
+  echo "OK: runner_health check=nix reason=available"
+fi
 
 OWNER="$(gh repo view "$REPO" --json owner --jq .owner.login)"
 echo "OK: set_variable SELF_HOSTED_OWNER=$OWNER"
