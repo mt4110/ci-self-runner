@@ -1012,7 +1012,8 @@ ensure_default_local_dir_matches_repo() {
 remote_path_for_shell() {
   local path="$1"
   if [[ "$path" == "~/"* ]]; then
-    printf '$HOME/%s\n' "${path#"~/"}"
+    # Emit a quoted path that expands $HOME on the remote side: cd "$HOME/..."
+    printf '%s\n' "\"\$HOME/${path#"~/"}\""
   else
     printf '%q\n' "$path"
   fi
