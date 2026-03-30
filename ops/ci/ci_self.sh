@@ -1085,6 +1085,19 @@ probe_remote_verify_artifacts() {
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
 
+remote_bootstrap_status() {
+  local host="$1"
+  local identity="${2:-}"
+  local script_q
+  local remote_script
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
+
+  remote_script='set -euo pipefail; if ! command -v gh >/dev/null 2>&1; then echo gh_missing; elif gh auth status >/dev/null 2>&1; then echo ok; else echo gh_auth_missing; fi'
+  script_q="$(quote_bash_lc_script "$remote_script")"
+  "${ssh_cmd[@]}" "$host" "bash -lc $script_q" 2>/dev/null || true
+}
+
 first_existing_public_key() {
   local key=""
   for key in \
@@ -1420,14 +1433,26 @@ USAGE
   elif [[ -z "$repo" ]]; then
     echo "SKIP: bootstrap reason=repo_not_set"
   else
-    local register_args=(register --repo "$repo" --repo-dir "$project_dir" --skip-workflow)
-    [[ -n "$labels" ]] && register_args+=(--labels "$labels")
-    [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
-    [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
-    [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
-    if ! run_remote_ci_self "$host" "$project_dir" "$remote_cli" "$identity" "${register_args[@]}"; then
-      echo "WARN: bootstrap failed; continuing standalone verify" >&2
-    fi
+    local bootstrap_status=""
+    bootstrap_status="$(remote_bootstrap_status "$host" "$identity")"
+    case "$bootstrap_status" in
+      gh_missing)
+        echo "SKIP: bootstrap reason=remote_gh_missing"
+        ;;
+      gh_auth_missing)
+        echo "SKIP: bootstrap reason=remote_gh_auth_missing"
+        ;;
+      *)
+        local register_args=(register --repo "$repo" --repo-dir "$project_dir" --skip-workflow)
+        [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+        [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
+        [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
+        [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
+        if ! run_remote_ci_self "$host" "$project_dir" "$remote_cli" "$identity" "${register_args[@]}"; then
+          echo "WARN: bootstrap failed; continuing standalone verify" >&2
+        fi
+        ;;
+    esac
   fi
 
   local sha=""

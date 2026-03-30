@@ -56,6 +56,11 @@ ci-self remote-ci --host ci@192.168.1.20 -i ~/.ssh/id_ed25519_for_ci_runner --pr
 4. マシンA で、同梱の verify wrapper を SSH 経由で実行
 5. `verify-full.status` と `out/logs` をマシンB の `out/remote/<host>/` に回収
 
+注:
+
+- bootstrap は remote 側で `gh auth status` が通るときだけ実行する
+- remote 側で GitHub CLI 未導入または未ログインなら、bootstrap は warning ではなく skip され、standalone verify は続行する
+
 同期時の既定:
 
 - `target/`, `dist/`, `node_modules/`, `.venv/`, `coverage/`, `.next/` などの生成物ディレクトリと `.git/` は同期しない

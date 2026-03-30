@@ -919,6 +919,94 @@ exit 0
 	}
 }
 
+func TestRemoteCISkipsBootstrapWhenRemoteGHAuthMissing(t *testing.T) {
+	tmp := t.TempDir()
+	localDir := filepath.Join(tmp, "zt-gateway")
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		t.Fatalf("mkdir local repo failed: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "tool.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "ssh $*" >> %q
+if [[ "$*" == *"BatchMode=yes"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"gh auth status"* ]]; then
+  echo gh_auth_missing
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	rsyncPath := filepath.Join(tmp, "rsync")
+	rsyncScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "rsync $*" >> %q
+src="${@: -2:1}"
+dst="${@: -1}"
+if printf '%%s' "$src" | grep -q '/out/verify-full.status$'; then
+  mkdir -p "$dst"
+  cat > "${dst%%/}/verify-full.status" <<'EOF'
+status=OK
+EOF
+  exit 0
+fi
+if printf '%%s' "$src" | grep -q '/out/logs/$'; then
+  mkdir -p "${dst%%/}"
+  echo "ok" > "${dst%%/}/verify.log"
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(rsyncPath, []byte(rsyncScript), 0o755); err != nil {
+		t.Fatalf("write fake rsync failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-ci",
+		"--host",
+		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
+		"--local-dir",
+		localDir,
+		"--project-dir",
+		"~/dev/zt-gateway",
+		"--repo",
+		"mt4110/zt-gateway",
+	)
+	if err != nil {
+		t.Fatalf("remote-ci failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "SKIP: bootstrap reason=remote_gh_auth_missing") {
+		t.Fatalf("expected bootstrap skip for missing remote gh auth\noutput:\n%s", out)
+	}
+	if strings.Contains(out, "WARN: bootstrap failed") {
+		t.Fatalf("did not expect bootstrap failure warning when auth is missing\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read tool log: %v", readErr)
+	}
+	if strings.Contains(string(logBody), " register --repo ") {
+		t.Fatalf("expected bootstrap to stop before remote register when gh auth is missing\nlog:\n%s", string(logBody))
+	}
+}
+
 func TestRemoteUpAcceptsIdentity(t *testing.T) {
 	tmp := t.TempDir()
 	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")

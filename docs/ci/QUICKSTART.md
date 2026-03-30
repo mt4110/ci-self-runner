@@ -62,12 +62,14 @@ ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_run
 
 1. SSH 鍵認証チェック（password不可）
 2. ローカル変更をマシンA に `rsync` 同期
-3. マシンA 側 verify 実行
-4. `out/remote/<host>/` へ結果回収
+3. （`--repo` 指定時かつ remote 側 `gh auth status` 成功時のみ）bootstrap 実行
+4. マシンA 側 verify 実行
+5. `out/remote/<host>/` へ結果回収
 
 既定では `target/`, `dist/`, `node_modules/`, `.venv/`, `coverage/`, `.next/` などの生成物ディレクトリと `.git/` を同期せず、`rsync --info=progress2` で進捗を表示します。
 ローカル `rsync` が古い場合は `-h --progress` に自動フォールバックしますが、Homebrew の新しい `rsync` を推奨します。
 repo 側の build/test が Git メタデータを直接読む場合だけ `--sync-git-dir` を付けてください。
+remote 側で GitHub CLI 未導入または未ログインなら bootstrap は skip されますが、verify 自体は続行します。
 
 `remote-ci` は LAN 専用ではなく、外出先でも SSH 到達性があれば使えます。
 逆に SSH 経路が無い場合、`remote-ci` 自体は疎通を作れません。
