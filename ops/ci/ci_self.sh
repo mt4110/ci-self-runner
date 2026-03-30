@@ -47,6 +47,29 @@ expand_local_path() {
   fi
 }
 
+preferred_rsync_bin() {
+  local current=""
+  current="$(command -v rsync 2>/dev/null || true)"
+  if [[ -n "$current" && "$current" != "/usr/bin/rsync" ]]; then
+    printf '%s\n' "$current"
+    return 0
+  fi
+  if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+    local candidate=""
+    for candidate in /opt/homebrew/bin/rsync /usr/local/bin/rsync; do
+      if [[ -x "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  if [[ -n "$current" ]]; then
+    printf '%s\n' "$current"
+    return 0
+  fi
+  return 1
+}
+
 run_go_cmd() {
   if command -v go >/dev/null 2>&1; then
     if go "$@"; then
@@ -1136,13 +1159,15 @@ sync_local_project_to_remote() {
   local project_dir="$3"
   local identity="${4:-}"
   local sync_git_dir="${5:-0}"
-  local rsync_cmd=(rsync -az --delete)
+  local rsync_bin=""
+  rsync_bin="$(preferred_rsync_bin)" || { echo "ERROR: rsync command not found" >&2; return 1; }
+  local rsync_cmd=("$rsync_bin" -az --delete)
   local ssh_rsh=""
   if [[ -n "$identity" ]]; then
     ssh_rsh="$(quote_words ssh -i "$identity")"
     rsync_cmd+=(-e "$ssh_rsh")
   fi
-  if rsync --info=progress2 --version >/dev/null 2>&1; then
+  if "$rsync_bin" --info=progress2 --version >/dev/null 2>&1; then
     rsync_cmd+=(--human-readable --info=progress2)
   else
     rsync_cmd+=(-h --progress)
@@ -1193,7 +1218,9 @@ fetch_remote_verify_artifacts() {
   local project_dir="$2"
   local out_dir="$3"
   local identity="${4:-}"
-  local rsync_base=(rsync -a)
+  local rsync_bin=""
+  rsync_bin="$(preferred_rsync_bin)" || { echo "ERROR: rsync command not found" >&2; return 1; }
+  local rsync_base=("$rsync_bin" -a)
   local ssh_rsh=""
   if [[ -n "$identity" ]]; then
     ssh_rsh="$(quote_words ssh -i "$identity")"
@@ -1274,6 +1301,7 @@ run_remote_ci_self() {
   shift 4
   local remote_args=("$@")
   local remote_args_q
+  local remote_cli_q
   local script_q
   local remote_script
   local remote_cd_q
@@ -1281,12 +1309,14 @@ run_remote_ci_self() {
   [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
 
   remote_args_q="$(quote_words "${remote_args[@]}")"
+  remote_cli_q="$(remote_path_for_shell "$remote_cli")"
   if [[ "$project_dir" == "~/"* ]]; then
     printf -v remote_cd_q '$HOME/%s' "${project_dir#"~/"}"
   else
     printf -v remote_cd_q '%q' "$project_dir"
   fi
-  printf -v remote_script 'set -euo pipefail; cd %s; %q %s' "$remote_cd_q" "$remote_cli" "$remote_args_q"
+  printf -v remote_script 'set -euo pipefail; remote_cli=%s; if [[ "$remote_cli" != */* ]] && ! command -v "$remote_cli" >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/$remote_cli" ]]; then remote_cli="$HOME/.local/bin/$remote_cli"; fi; cd %s; "$remote_cli" %s' \
+    "$remote_cli_q" "$remote_cd_q" "$remote_args_q"
   script_q="$(quote_bash_lc_script "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=$remote_cli ${remote_args[*]}"
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
@@ -1371,7 +1401,7 @@ USAGE
   out_dir="$(expand_local_path "$out_dir")"
 
   command -v ssh >/dev/null 2>&1 || { echo "ERROR: ssh command not found" >&2; return 1; }
-  command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync command not found" >&2; return 1; }
+  preferred_rsync_bin >/dev/null 2>&1 || { echo "ERROR: rsync command not found" >&2; return 1; }
 
   ensure_ssh_key_auth "$host" "$identity"
   ensure_remote_project_dir "$host" "$project_dir" "$identity"

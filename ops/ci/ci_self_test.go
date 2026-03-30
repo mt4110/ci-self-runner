@@ -73,6 +73,55 @@ func TestRemoteRegisterRequiresHost(t *testing.T) {
 	}
 }
 
+func TestRemoteRegisterFallsBackToHomeLocalBin(t *testing.T) {
+	tmp := t.TempDir()
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "ssh.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> %q
+if [[ "$*" == *"BatchMode=yes"* ]]; then
+  exit 0
+fi
+exit 42
+`, logPath)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-register",
+		"--host",
+		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
+		"--project-dir",
+		"~/dev/zt-gateway",
+		"--repo",
+		"mt4110/zt-gateway",
+		"--skip-workflow",
+	)
+	if err == nil {
+		t.Fatalf("expected failure from fake ssh, got success\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read ssh log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "$HOME/.local/bin/$remote_cli") {
+		t.Fatalf("expected remote register to fall back to ~/.local/bin/ci-self\nlog:\n%s", string(logBody))
+	}
+}
+
 func TestUpHelp(t *testing.T) {
 	out, err := runCiSelf(t, "up", "--help")
 	if err != nil {
