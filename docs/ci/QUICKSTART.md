@@ -10,7 +10,7 @@ bash ops/ci/install_cli.sh
 ## 2) CI対象リポジトリで 1 コマンド実行
 
 ```bash
-cd ~/dev/maakie-brainlab
+cd ~/dev/<target-repo>
 ci-self up
 ```
 
@@ -28,11 +28,11 @@ ci-self config-init
 `.ci-self.env` 例:
 
 ```env
-CI_SELF_REPO=mt4110/maakie-brainlab
+CI_SELF_REPO=<owner>/<repo>
 CI_SELF_REF=main
-CI_SELF_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_PROJECT_DIR=/Users/<you>/dev/<target-repo>
 CI_SELF_REMOTE_HOST=<you>@ci-runner.local
-CI_SELF_REMOTE_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_REMOTE_PROJECT_DIR=/Users/<you>/dev/<target-repo>
 CI_SELF_REMOTE_IDENTITY=/Users/<you>/.ssh/id_ed25519_for_ci_runner
 CI_SELF_PR_BASE=main
 ```
@@ -41,6 +41,9 @@ CI_SELF_PR_BASE=main
 
 - マシンA: self-hosted runner / colima / docker を置く端末
 - マシンB: そこへ verify を依頼する手元端末
+
+比喩で言うと、マシンB は普段の机、マシンA は重い作業を引き受ける工房です。
+`remote-ci` は、机の上の作業ツリーを工房へ運び、検証後の結果だけを机へ戻すイメージです。
 
 まずマシンB で SSH 鍵を用意し、公開鍵をマシンA の `~/.ssh/authorized_keys` に登録します。
 

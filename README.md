@@ -14,7 +14,7 @@ bash ops/ci/install_cli.sh
 CI対象リポジトリで（ローカル）:
 
 ```bash
-cd ~/dev/maakie-brainlab
+cd ~/dev/<target-repo>
 ci-self up
 ```
 
@@ -27,10 +27,13 @@ ci-self up
 
 ## 別端末の CI runner を 1 コマンドで使う（推奨）
 
-この導線は、特定の `~/dev/maakie-brainlab` 専用ではありません。
+この導線は、特定のリポジトリ専用ではありません。
 
 - マシンA: self-hosted runner / colima / docker を置いている端末
 - マシンB: 普段コードを書く端末。ここからマシンAへ verify を依頼する
+
+比喩で言うと、マシンB は普段の机、マシンA は重い作業を引き受ける工房です。
+`remote-ci` は、机の上で書いたものを工房へ持ち込み、確認が終わった成果物だけを持ち帰る導線です。
 
 マシンB から 1 コマンドで「鍵認証確認 -> 同期 -> マシンA実行 -> 結果回収」まで行います。
 
@@ -45,7 +48,7 @@ ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_run
 例:
 
 ```bash
-ci-self remote-ci --host ci@192.168.1.20 -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/maakie-brainlab' --repo mt4110/maakie-brainlab
+ci-self remote-ci --host ci@192.168.1.20 -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/<target-repo>' --repo <owner>/<repo>
 ```
 
 `remote-ci` の実行内容:
@@ -178,11 +181,11 @@ ci-self config-init
 例:
 
 ```env
-CI_SELF_REPO=mt4110/maakie-brainlab
+CI_SELF_REPO=<owner>/<repo>
 CI_SELF_REF=main
-CI_SELF_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_PROJECT_DIR=/Users/<you>/dev/<target-repo>
 CI_SELF_REMOTE_HOST=<you>@ci-runner.local
-CI_SELF_REMOTE_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_REMOTE_PROJECT_DIR=/Users/<you>/dev/<target-repo>
 CI_SELF_REMOTE_IDENTITY=/Users/<you>/.ssh/id_ed25519_for_ci_runner
 CI_SELF_PR_BASE=main
 ```
