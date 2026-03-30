@@ -426,7 +426,7 @@ exit 0
 	if !strings.Contains(out, "cmd=remote_verify_wrapper") {
 		t.Fatalf("expected remote verify wrapper invocation\noutput:\n%s", out)
 	}
-	if !strings.Contains(logText, "sh\\ -s") {
+	if !strings.Contains(logText, "sh\\ -s") && !strings.Contains(logText, "sh -s") {
 		t.Fatalf("expected remote verify wrapper to stream script over ssh\nlog:\n%s", logText)
 	}
 	if !strings.Contains(logText, "rsync -a -e ssh -i "+identityPath) {
@@ -514,6 +514,9 @@ exit 0
 	logText := string(logBody)
 	if strings.Contains(logText, "$HOME/~/_workspace/veil-rs") {
 		t.Fatalf("tilde path was expanded incorrectly\nlog:\n%s", logText)
+	}
+	if strings.Contains(logText, "\\$HOME/_workspace/veil-rs") {
+		t.Fatalf("tilde path should expand on remote, not remain escaped\nlog:\n%s", logText)
 	}
 	if !strings.Contains(logText, "_workspace/veil-rs") {
 		t.Fatalf("expected remote command to target remote project dir\nlog:\n%s", logText)

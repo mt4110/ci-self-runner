@@ -930,6 +930,12 @@ quote_words() {
   printf '%s\n' "$out"
 }
 
+quote_bash_lc_script() {
+  local script="$1"
+  script="${script//\'/\'\"\'\"\'}"
+  printf "'%s'\n" "$script"
+}
+
 default_remote_project_dir() {
   if [[ -n "$CONFIG_REMOTE_PROJECT_DIR" ]]; then
     printf '%s\n' "$CONFIG_REMOTE_PROJECT_DIR"
@@ -981,7 +987,7 @@ ensure_default_local_dir_matches_repo() {
 remote_path_for_shell() {
   local path="$1"
   if [[ "$path" == "~/"* ]]; then
-    printf '\$HOME/%s\n' "${path#"~/"}"
+    printf '$HOME/%s\n' "${path#"~/"}"
   else
     printf '%q\n' "$path"
   fi
@@ -1002,7 +1008,7 @@ run_remote_command_in_dir() {
   remote_cmd_q="$(quote_words "$@")"
   remote_cd_q="$(remote_path_for_shell "$project_dir")"
   printf -v remote_script 'set -euo pipefail; cd %s; %s' "$remote_cd_q" "$remote_cmd_q"
-  script_q="$(quote_words "$remote_script")"
+  script_q="$(quote_bash_lc_script "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=$*"
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
@@ -1031,7 +1037,7 @@ run_remote_verify_wrapper() {
     printf -v remote_script '%s GITHUB_REF_NAME=%q' "$remote_script" "$github_ref"
   fi
   printf -v remote_script '%s; sh -s' "$remote_script"
-  script_q="$(quote_words "$remote_script")"
+  script_q="$(quote_bash_lc_script "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=remote_verify_wrapper"
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q" < "$ROOT_DIR/ops/ci/run_verify_full.sh"
 }
@@ -1049,7 +1055,7 @@ probe_remote_verify_artifacts() {
   remote_cd_q="$(remote_path_for_shell "$project_dir")"
   printf -v remote_script 'set -euo pipefail; cd %s; if [[ -f out/verify-full.status ]]; then echo "OK: remote_artifacts status_file=$PWD/out/verify-full.status"; else echo "WARN: remote_artifacts status_file_missing=$PWD/out/verify-full.status"; fi; if [[ -d out/logs ]]; then echo "OK: remote_artifacts logs_dir=$PWD/out/logs"; else echo "WARN: remote_artifacts logs_dir_missing=$PWD/out/logs"; fi' \
     "$remote_cd_q"
-  script_q="$(quote_words "$remote_script")"
+  script_q="$(quote_bash_lc_script "$remote_script")"
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
 
@@ -1119,7 +1125,7 @@ ensure_remote_project_dir() {
 
   remote_dir_q="$(remote_path_for_shell "$project_dir")"
   printf -v remote_script 'set -euo pipefail; mkdir -p %s' "$remote_dir_q"
-  script_q="$(quote_words "$remote_script")"
+  script_q="$(quote_bash_lc_script "$remote_script")"
   echo "OK: ssh host=$host ensure_dir=$project_dir"
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
@@ -1208,7 +1214,7 @@ fetch_remote_verify_artifacts() {
     [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
     remote_cd_q="$(remote_path_for_shell "$project_dir")"
     printf -v remote_script 'set -euo pipefail; cd %s; test -f out/verify-full.status; cat out/verify-full.status' "$remote_cd_q"
-    script_q="$(quote_words "$remote_script")"
+    script_q="$(quote_bash_lc_script "$remote_script")"
     if "${ssh_cmd[@]}" "$host" "bash -lc $script_q" > "$tmp_status" && grep -q 'status=' "$tmp_status"; then
       mv "$tmp_status" "$out_dir/verify-full.status"
       echo "OK: fetch status_file=$out_dir/verify-full.status source=ssh_fallback"
@@ -1229,7 +1235,7 @@ fetch_remote_verify_artifacts() {
     [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
     remote_cd_q="$(remote_path_for_shell "$project_dir")"
     printf -v remote_script 'set -euo pipefail; cd %s; test -d out/logs; tar -cf - -C out logs' "$remote_cd_q"
-    script_q="$(quote_words "$remote_script")"
+    script_q="$(quote_bash_lc_script "$remote_script")"
     if "${ssh_cmd[@]}" "$host" "bash -lc $script_q" | tar -xf - -C "$out_dir"; then
       echo "OK: fetch logs_dir=$out_dir/logs source=ssh_fallback"
     else
@@ -1276,12 +1282,12 @@ run_remote_ci_self() {
 
   remote_args_q="$(quote_words "${remote_args[@]}")"
   if [[ "$project_dir" == "~/"* ]]; then
-    remote_cd_q="\$HOME/${project_dir#"~/"}"
+    printf -v remote_cd_q '$HOME/%s' "${project_dir#"~/"}"
   else
     printf -v remote_cd_q '%q' "$project_dir"
   fi
   printf -v remote_script 'set -euo pipefail; cd %s; %q %s' "$remote_cd_q" "$remote_cli" "$remote_args_q"
-  script_q="$(quote_words "$remote_script")"
+  script_q="$(quote_bash_lc_script "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=$remote_cli ${remote_args[*]}"
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
