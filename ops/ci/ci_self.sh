@@ -461,6 +461,7 @@ cmd_register() {
   local discord_webhook_url=""
   local force_workflow=0
   local skip_workflow=0
+  local skip_dispatch=1
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -473,9 +474,10 @@ cmd_register() {
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
       --force-workflow) force_workflow=1; shift ;;
       --skip-workflow) skip_workflow=1; shift ;;
+      --skip-dispatch) skip_dispatch=1; shift ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self register [--repo owner/repo] [--repo-dir path] [--labels csv] [--runner-name name] [--runner-group name] [--discord-webhook-url url] [--force-workflow] [--skip-workflow]
+Usage: ci-self register [--repo owner/repo] [--repo-dir path] [--labels csv] [--runner-name name] [--runner-group name] [--discord-webhook-url url] [--force-workflow] [--skip-workflow] [--skip-dispatch]
 USAGE
         return 0
         ;;
@@ -498,11 +500,12 @@ USAGE
   [[ "$skip_workflow" -eq 0 ]] && skip_workflow="$(config_bool_to_int "$CONFIG_SKIP_WORKFLOW")"
 
   repo="$(resolve_repo "$repo")"
-  local args=(--repo "$repo" --repo-dir "$repo_dir" --ref "$ref" --labels "$labels" --runner-group "$runner_group" --skip-dispatch)
+  local args=(--repo "$repo" --repo-dir "$repo_dir" --ref "$ref" --labels "$labels" --runner-group "$runner_group")
   [[ -n "$runner_name" ]] && args+=(--runner-name "$runner_name")
   [[ -n "$discord_webhook_url" ]] && args+=(--discord-webhook-url "$discord_webhook_url")
   [[ "$force_workflow" -eq 1 ]] && args+=(--force-workflow)
   [[ "$skip_workflow" -eq 1 ]] && args+=(--skip-workflow)
+  [[ "$skip_dispatch" -eq 1 ]] && args+=(--skip-dispatch)
 
   bash "$ROOT_DIR/ops/ci/onboard_and_verify.sh" "${args[@]}"
 }
@@ -1417,7 +1420,7 @@ USAGE
   elif [[ -z "$repo" ]]; then
     echo "SKIP: bootstrap reason=repo_not_set"
   else
-    local register_args=(register --repo "$repo" --repo-dir "$project_dir" --skip-workflow --skip-dispatch)
+    local register_args=(register --repo "$repo" --repo-dir "$project_dir" --skip-workflow)
     [[ -n "$labels" ]] && register_args+=(--labels "$labels")
     [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
     [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
