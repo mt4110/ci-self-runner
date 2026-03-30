@@ -1083,7 +1083,8 @@ sync_local_project_to_remote() {
   local host="$2"
   local project_dir="$3"
   local identity="${4:-}"
-  local rsync_cmd=(rsync -az --delete)
+  local sync_git_dir="${5:-0}"
+  local rsync_cmd=(rsync -az --delete --human-readable --info=progress2)
   local ssh_rsh=""
   if [[ -n "$identity" ]]; then
     ssh_rsh="$(quote_words ssh -i "$identity")"
@@ -1094,11 +1095,39 @@ sync_local_project_to_remote() {
     --exclude ".local/"
     --exclude "out/"
     --exclude "cache/"
+    --exclude ".cache/"
+    --exclude "target/"
+    --exclude "dist/"
+    --exclude "node_modules/"
+    --exclude ".next/"
+    --exclude ".nuxt/"
+    --exclude ".svelte-kit/"
+    --exclude ".turbo/"
+    --exclude ".parcel-cache/"
+    --exclude ".venv/"
+    --exclude "venv/"
+    --exclude "__pycache__/"
+    --exclude ".pytest_cache/"
+    --exclude ".mypy_cache/"
+    --exclude ".ruff_cache/"
+    --exclude ".tox/"
+    --exclude ".nox/"
+    --exclude ".eggs/"
+    --exclude "*.egg-info/"
+    --exclude "coverage/"
+    --exclude "htmlcov/"
+    --exclude ".gradle/"
     --exclude ".DS_Store"
+  )
+  if [[ "$sync_git_dir" -ne 1 ]]; then
+    rsync_cmd+=(--exclude ".git/")
+  fi
+  rsync_cmd+=(
     "$local_dir/"
     "$host:$project_dir/"
   )
   "${rsync_cmd[@]}"
+  echo "OK: rsync_complete host=$host dst=$project_dir"
 }
 
 fetch_remote_verify_artifacts() {
@@ -1185,6 +1214,7 @@ cmd_remote_ci() {
   local out_dir=""
   local identity=""
   local local_dir_was_explicit=0
+  local sync_git_dir=0
   local remote_cli="ci-self"
   local repo=""
   local labels=""
@@ -1211,6 +1241,7 @@ cmd_remote_ci() {
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
       --verify-dry-run) verify_dry_run="$(config_bool_to_int "${2:-}")"; shift 2 ;;
       --verify-gha-sync) verify_gha_sync="$(config_bool_to_int "${2:-}")"; shift 2 ;;
+      --sync-git-dir) sync_git_dir=1; shift ;;
       --skip-bootstrap) skip_bootstrap=1; shift ;;
       --no-sync) no_sync=1; shift ;;
       -h|--help)
@@ -1220,7 +1251,7 @@ Usage: ci-self remote-ci --host <ssh-host> [-i identity_file] [--project-dir pat
                          [--labels csv] [--runner-name name] [--runner-group name]
                          [--discord-webhook-url url]
                          [--verify-dry-run 0|1] [--verify-gha-sync 0|1]
-                         [--skip-bootstrap] [--no-sync]
+                         [--sync-git-dir] [--skip-bootstrap] [--no-sync]
 USAGE
         return 0
         ;;
@@ -1263,7 +1294,7 @@ USAGE
   if [[ "$no_sync" -eq 1 ]]; then
     echo "SKIP: sync reason=no_sync_flag"
   else
-    sync_local_project_to_remote "$local_dir" "$host" "$project_dir" "$identity"
+    sync_local_project_to_remote "$local_dir" "$host" "$project_dir" "$identity" "$sync_git_dir"
   fi
 
   if [[ "$skip_bootstrap" -eq 1 ]]; then

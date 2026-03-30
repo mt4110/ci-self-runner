@@ -401,8 +401,29 @@ exit 0
 	if !strings.Contains(logText, "ssh -i "+identityPath) {
 		t.Fatalf("expected ssh to receive identity file\nlog:\n%s", logText)
 	}
-	if !strings.Contains(logText, "rsync -az --delete -e ssh -i "+identityPath) {
+	if !strings.Contains(logText, "rsync -az --delete --human-readable --info=progress2 -e ssh -i "+identityPath) {
 		t.Fatalf("expected rsync sync to receive identity file\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude target/") {
+		t.Fatalf("expected rsync sync to exclude target dir\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude dist/") {
+		t.Fatalf("expected rsync sync to exclude dist dir\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude node_modules/") {
+		t.Fatalf("expected rsync sync to exclude node_modules dir\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude .venv/") {
+		t.Fatalf("expected rsync sync to exclude python virtualenv dir\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude coverage/") {
+		t.Fatalf("expected rsync sync to exclude coverage dir\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude .next/") {
+		t.Fatalf("expected rsync sync to exclude next build dir\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--exclude .git/") {
+		t.Fatalf("expected rsync sync to exclude git dir by default\nlog:\n%s", logText)
 	}
 	if !strings.Contains(logText, "rsync -a -e ssh -i "+identityPath) {
 		t.Fatalf("expected rsync fetch to receive identity file\nlog:\n%s", logText)
@@ -495,6 +516,88 @@ exit 0
 	}
 	if !strings.Contains(logText, "_workspace/veil-rs") {
 		t.Fatalf("expected remote command to target remote project dir\nlog:\n%s", logText)
+	}
+}
+
+func TestRemoteCISyncGitDirOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	localDir := filepath.Join(tmp, "repo")
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
+		t.Fatalf("mkdir local repo failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write local verify script failed: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "tool.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "ssh $*" >> %q
+if [[ "$*" == *"BatchMode=yes"* ]]; then
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	rsyncPath := filepath.Join(tmp, "rsync")
+	rsyncScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "rsync $*" >> %q
+src="${@: -2:1}"
+dst="${@: -1}"
+if printf '%%s' "$src" | grep -q '/out/verify-full.status$'; then
+  mkdir -p "$dst"
+  cat > "${dst%%/}/verify-full.status" <<'EOF'
+status=OK
+EOF
+  exit 0
+fi
+if printf '%%s' "$src" | grep -q '/out/logs/$'; then
+  mkdir -p "${dst%%/}"
+  echo "ok" > "${dst%%/}/verify.log"
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(rsyncPath, []byte(rsyncScript), 0o755); err != nil {
+		t.Fatalf("write fake rsync failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-ci",
+		"--host",
+		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
+		"--local-dir",
+		localDir,
+		"--project-dir",
+		"~/dev/zt-gateway",
+		"--skip-bootstrap",
+		"--sync-git-dir",
+	)
+	if err != nil {
+		t.Fatalf("remote-ci failed: %v\noutput:\n%s", err, out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read tool log: %v", readErr)
+	}
+	logText := string(logBody)
+	if strings.Contains(logText, "--exclude .git/") {
+		t.Fatalf("expected sync-git-dir to keep .git in sync set\nlog:\n%s", logText)
 	}
 }
 

@@ -54,6 +54,12 @@ ci-self remote-ci --host ci@192.168.1.20 -i ~/.ssh/id_ed25519_for_ci_runner --pr
 4. マシンA で `ops/ci/run_verify_full.sh` を実行
 5. `verify-full.status` と `out/logs` をマシンB の `out/remote/<host>/` に回収
 
+同期時の既定:
+
+- `target/`, `dist/`, `node_modules/`, `.venv/`, `coverage/`, `.next/` などの生成物ディレクトリと `.git/` は同期しない
+- `rsync --info=progress2` で進捗を表示する
+- build/test が Git メタデータを直接参照する repo だけは `--sync-git-dir` で `.git/` 同期を有効化する
+
 ### 初回だけ必要な準備（マシンB -> マシンA）
 
 1. マシンB で SSH 鍵を作る（未作成なら）
@@ -109,6 +115,8 @@ ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_run
 - `remote-ci` の同期元はデフォルトで「今いる repo」。別 repo を送りたい場合は `--local-dir` を使う
 - `--project-dir` はマシンA 側の配置先パス。`~` を使う場合は `--project-dir '~/<path>'` のようにクオート
 - `--local-dir` を使うと、マシンB 側の同期元を明示できる
+- `--sync-git-dir` を付けると `.git/` も同期する。通常は不要
+- `*.md`, `*.log`, `*.txt`, `build/`, `bin/`, `10MB超ファイル` は既定除外していない。tracked asset / fixture / source の可能性があるため
 - `--repo` を省略すると bootstrap は skip されるが、同期済みプロジェクト上での standalone verify は実行できる
 - runner 初期化/復旧専用の旧導線は `ci-self remote-up`
 

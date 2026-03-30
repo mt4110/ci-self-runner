@@ -65,6 +65,9 @@ ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_run
 3. マシンA 側 verify 実行
 4. `out/remote/<host>/` へ結果回収
 
+既定では `target/`, `dist/`, `node_modules/`, `.venv/`, `coverage/`, `.next/` などの生成物ディレクトリと `.git/` を同期せず、`rsync --info=progress2` で進捗を表示します。
+repo 側の build/test が Git メタデータを直接読む場合だけ `--sync-git-dir` を付けてください。
+
 `remote-ci` は LAN 専用ではなく、外出先でも SSH 到達性があれば使えます。
 逆に SSH 経路が無い場合、`remote-ci` 自体は疎通を作れません。
 
