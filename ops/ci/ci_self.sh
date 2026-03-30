@@ -21,6 +21,7 @@ CONFIG_REF=""
 CONFIG_PROJECT_DIR=""
 CONFIG_REMOTE_HOST=""
 CONFIG_REMOTE_PROJECT_DIR=""
+CONFIG_REMOTE_IDENTITY=""
 CONFIG_REMOTE_CLI=""
 CONFIG_LABELS=""
 CONFIG_RUNNER_NAME=""
@@ -112,6 +113,7 @@ load_config() {
       CI_SELF_PROJECT_DIR) CONFIG_PROJECT_DIR="$val" ;;
       CI_SELF_REMOTE_HOST) CONFIG_REMOTE_HOST="$val" ;;
       CI_SELF_REMOTE_PROJECT_DIR) CONFIG_REMOTE_PROJECT_DIR="$val" ;;
+      CI_SELF_REMOTE_IDENTITY) CONFIG_REMOTE_IDENTITY="$val" ;;
       CI_SELF_REMOTE_CLI) CONFIG_REMOTE_CLI="$val" ;;
       CI_SELF_LABELS) CONFIG_LABELS="$val" ;;
       CI_SELF_RUNNER_NAME) CONFIG_RUNNER_NAME="$val" ;;
@@ -154,8 +156,8 @@ Examples:
   ci-self register
   ci-self run-watch
   ci-self run-focus
-  ci-self remote-ci --host <user>@<mac-mini> --project-dir '~/dev/maakie-brainlab'
-  ci-self remote-up --host mac-mini.local --project-dir ~/dev/maakie-brainlab
+  ci-self remote-ci --host <user>@<ci-host> -i ~/.ssh/id_ed25519 --project-dir '~/dev/project'
+  ci-self remote-up --host ci-runner.local --project-dir ~/dev/project
 USAGE
 }
 
@@ -330,12 +332,41 @@ sync_pr_from_template() {
     return 0
   fi
 
-  local body_file
-  body_file="$(mktemp)"
-  cp "$tmpl" "$body_file"
-  gh pr edit "$pr_number" -R "$repo" --title "$title" --body-file "$body_file"
-  rm -f "$body_file"
-  echo "OK: pr_template_sync pr=$pr_number template=$tmpl title=$title"
+  local current_title=""
+  local current_body=""
+  current_title="$(gh pr view "$pr_number" -R "$repo" --json title --jq '.title // ""' 2>/dev/null || true)"
+  current_body="$(gh pr view "$pr_number" -R "$repo" --json body --jq '.body // ""' 2>/dev/null || true)"
+
+  local should_set_title=0
+  local should_set_body=0
+  if [[ -z "$(trim "$current_title")" ]]; then
+    should_set_title=1
+  fi
+  if [[ -z "$(trim "$current_body")" ]]; then
+    should_set_body=1
+  fi
+
+  if [[ "$should_set_title" -eq 0 && "$should_set_body" -eq 0 ]]; then
+    echo "SKIP: pr_template_sync reason=pr_already_has_title_and_body pr=$pr_number"
+    return 0
+  fi
+
+  local body_file=""
+  if [[ "$should_set_body" -eq 1 ]]; then
+    body_file="$(mktemp)"
+    cp "$tmpl" "$body_file"
+  fi
+
+  if [[ "$should_set_title" -eq 1 && "$should_set_body" -eq 1 ]]; then
+    gh pr edit "$pr_number" -R "$repo" --title "$title" --body-file "$body_file"
+  elif [[ "$should_set_title" -eq 1 ]]; then
+    gh pr edit "$pr_number" -R "$repo" --title "$title"
+  else
+    gh pr edit "$pr_number" -R "$repo" --body-file "$body_file"
+  fi
+
+  [[ -n "$body_file" ]] && rm -f "$body_file"
+  echo "OK: pr_template_sync pr=$pr_number template=$tmpl title_sync=$should_set_title body_sync=$should_set_body"
 }
 
 ensure_branch_pushed() {
@@ -869,6 +900,7 @@ CI_SELF_PROJECT_DIR=${project_dir}
 # Optional remote defaults
 CI_SELF_REMOTE_HOST=
 CI_SELF_REMOTE_PROJECT_DIR=
+CI_SELF_REMOTE_IDENTITY=
 CI_SELF_REMOTE_CLI=ci-self
 
 # Optional runner defaults
@@ -940,18 +972,21 @@ remote_path_for_shell() {
 run_remote_command_in_dir() {
   local host="$1"
   local project_dir="$2"
-  shift 2
+  local identity="${3:-}"
+  shift 3
   local remote_cmd_q
   local script_q
   local remote_script
   local remote_cd_q
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
 
   remote_cmd_q="$(quote_words "$@")"
   remote_cd_q="$(remote_path_for_shell "$project_dir")"
   printf -v remote_script 'set -euo pipefail; cd %s; %s' "$remote_cd_q" "$remote_cmd_q"
   script_q="$(quote_words "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=$*"
-  ssh "$host" "bash -lc $script_q"
+  "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
 
 first_existing_public_key() {
@@ -968,19 +1003,40 @@ first_existing_public_key() {
   return 1
 }
 
+preferred_public_key() {
+  local identity="${1:-}"
+  local identity_pub=""
+  if [[ -n "$identity" ]]; then
+    identity_pub="${identity}.pub"
+    if [[ -f "$identity_pub" ]]; then
+      printf '%s\n' "$identity_pub"
+      return 0
+    fi
+  fi
+  first_existing_public_key
+}
+
 ensure_ssh_key_auth() {
   local host="$1"
-  if ssh -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "$host" "true" >/dev/null 2>&1; then
+  local identity="${2:-}"
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
+
+  if "${ssh_cmd[@]}" -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no "$host" "true" >/dev/null 2>&1; then
     echo "OK: ssh key_auth host=$host"
     return 0
   fi
 
   echo "ERROR: ssh key-based auth failed for host=$host" >&2
   local pub_key=""
-  pub_key="$(first_existing_public_key || true)"
+  pub_key="$(preferred_public_key "$identity" || true)"
   if [[ -n "$pub_key" ]]; then
     echo "HINT: register your public key to remote ~/.ssh/authorized_keys" >&2
-    echo "HINT: cat $pub_key | ssh $host 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'" >&2
+    if [[ -n "$identity" ]]; then
+      echo "HINT: cat $pub_key | ssh -i $identity $host 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'" >&2
+    else
+      echo "HINT: cat $pub_key | ssh $host 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'" >&2
+    fi
   else
     echo "HINT: generate a key first: ssh-keygen -t ed25519 -a 100" >&2
   fi
@@ -990,46 +1046,66 @@ ensure_ssh_key_auth() {
 ensure_remote_project_dir() {
   local host="$1"
   local project_dir="$2"
+  local identity="${3:-}"
   local remote_dir_q
   local script_q
   local remote_script
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
 
   remote_dir_q="$(remote_path_for_shell "$project_dir")"
   printf -v remote_script 'set -euo pipefail; mkdir -p %s' "$remote_dir_q"
   script_q="$(quote_words "$remote_script")"
   echo "OK: ssh host=$host ensure_dir=$project_dir"
-  ssh "$host" "bash -lc $script_q"
+  "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
 
 sync_local_project_to_remote() {
   local local_dir="$1"
   local host="$2"
   local project_dir="$3"
+  local identity="${4:-}"
+  local rsync_cmd=(rsync -az --delete)
+  local ssh_rsh=""
+  if [[ -n "$identity" ]]; then
+    ssh_rsh="$(quote_words ssh -i "$identity")"
+    rsync_cmd+=(-e "$ssh_rsh")
+  fi
   echo "OK: rsync host=$host src=$local_dir dst=$project_dir"
-  rsync -az --delete \
-    --exclude ".local/" \
-    --exclude "out/" \
-    --exclude "cache/" \
-    --exclude ".DS_Store" \
-    "$local_dir/" "$host:$project_dir/"
+  rsync_cmd+=(
+    --exclude ".local/"
+    --exclude "out/"
+    --exclude "cache/"
+    --exclude ".DS_Store"
+    "$local_dir/"
+    "$host:$project_dir/"
+  )
+  "${rsync_cmd[@]}"
 }
 
 fetch_remote_verify_artifacts() {
   local host="$1"
   local project_dir="$2"
   local out_dir="$3"
+  local identity="${4:-}"
+  local rsync_base=(rsync -a)
+  local ssh_rsh=""
+  if [[ -n "$identity" ]]; then
+    ssh_rsh="$(quote_words ssh -i "$identity")"
+    rsync_base+=(-e "$ssh_rsh")
+  fi
 
   mkdir -p "$out_dir" "$out_dir/logs"
   local failed=0
 
-  if rsync -a "$host:$project_dir/out/verify-full.status" "$out_dir/"; then
+  if "${rsync_base[@]}" "$host:$project_dir/out/verify-full.status" "$out_dir/"; then
     echo "OK: fetch status_file=$out_dir/verify-full.status"
   else
     echo "ERROR: fetch status_file failed host=$host path=$project_dir/out/verify-full.status" >&2
     failed=1
   fi
 
-  if rsync -a "$host:$project_dir/out/logs/" "$out_dir/logs/"; then
+  if "${rsync_base[@]}" "$host:$project_dir/out/logs/" "$out_dir/logs/"; then
     echo "OK: fetch logs_dir=$out_dir/logs"
   else
     echo "ERROR: fetch logs failed host=$host path=$project_dir/out/logs/" >&2
@@ -1062,12 +1138,15 @@ run_remote_ci_self() {
   local host="$1"
   local project_dir="$2"
   local remote_cli="$3"
-  shift 3
+  local identity="${4:-}"
+  shift 4
   local remote_args=("$@")
   local remote_args_q
   local script_q
   local remote_script
   local remote_cd_q
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
 
   remote_args_q="$(quote_words "${remote_args[@]}")"
   if [[ "$project_dir" == "~/"* ]]; then
@@ -1078,7 +1157,7 @@ run_remote_ci_self() {
   printf -v remote_script 'set -euo pipefail; cd %s; %q %s' "$remote_cd_q" "$remote_cli" "$remote_args_q"
   script_q="$(quote_words "$remote_script")"
   echo "OK: ssh host=$host dir=$project_dir cmd=$remote_cli ${remote_args[*]}"
-  ssh "$host" "bash -lc $script_q"
+  "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
 
 cmd_remote_ci() {
@@ -1086,6 +1165,7 @@ cmd_remote_ci() {
   local project_dir=""
   local local_dir=""
   local out_dir=""
+  local identity=""
   local remote_cli="ci-self"
   local repo=""
   local labels=""
@@ -1100,6 +1180,7 @@ cmd_remote_ci() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --host) host="${2:-}"; shift 2 ;;
+      -i|--identity) identity="${2:-}"; shift 2 ;;
       --project-dir) project_dir="${2:-}"; shift 2 ;;
       --local-dir) local_dir="${2:-}"; shift 2 ;;
       --out-dir) out_dir="${2:-}"; shift 2 ;;
@@ -1115,7 +1196,7 @@ cmd_remote_ci() {
       --no-sync) no_sync=1; shift ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self remote-ci --host <ssh-host> [--project-dir path] [--local-dir path] [--out-dir path]
+Usage: ci-self remote-ci --host <ssh-host> [-i identity_file] [--project-dir path] [--local-dir path] [--out-dir path]
                          [--repo owner/repo] [--remote-cli path]
                          [--labels csv] [--runner-name name] [--runner-group name]
                          [--discord-webhook-url url]
@@ -1132,6 +1213,7 @@ USAGE
   done
 
   [[ -z "$host" ]] && host="$CONFIG_REMOTE_HOST"
+  [[ -z "$identity" && -n "$CONFIG_REMOTE_IDENTITY" ]] && identity="$CONFIG_REMOTE_IDENTITY"
   [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
@@ -1143,7 +1225,9 @@ USAGE
   [[ -z "$project_dir" ]] && project_dir="$(default_remote_project_dir)"
   [[ -z "$local_dir" ]] && local_dir="$(default_local_project_dir)"
   local_dir="$(expand_local_path "$local_dir")"
+  [[ -n "$identity" ]] && identity="$(expand_local_path "$identity")"
   [[ -d "$local_dir" ]] || { echo "ERROR: --local-dir not found: $local_dir" >&2; return 2; }
+  [[ -z "$identity" || -f "$identity" ]] || { echo "ERROR: identity file not found: $identity" >&2; return 2; }
 
   if [[ -z "$out_dir" ]]; then
     out_dir="$local_dir/out/remote/$(sanitize_for_path_segment "$host")"
@@ -1153,13 +1237,13 @@ USAGE
   command -v ssh >/dev/null 2>&1 || { echo "ERROR: ssh command not found" >&2; return 1; }
   command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync command not found" >&2; return 1; }
 
-  ensure_ssh_key_auth "$host"
-  ensure_remote_project_dir "$host" "$project_dir"
+  ensure_ssh_key_auth "$host" "$identity"
+  ensure_remote_project_dir "$host" "$project_dir" "$identity"
 
   if [[ "$no_sync" -eq 1 ]]; then
     echo "SKIP: sync reason=no_sync_flag"
   else
-    sync_local_project_to_remote "$local_dir" "$host" "$project_dir"
+    sync_local_project_to_remote "$local_dir" "$host" "$project_dir" "$identity"
   fi
 
   if [[ "$skip_bootstrap" -eq 1 ]]; then
@@ -1172,7 +1256,7 @@ USAGE
     [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
     [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
     [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
-    if ! run_remote_ci_self "$host" "$project_dir" "$remote_cli" "${register_args[@]}"; then
+    if ! run_remote_ci_self "$host" "$project_dir" "$remote_cli" "$identity" "${register_args[@]}"; then
       echo "WARN: bootstrap failed; continuing standalone verify" >&2
     fi
   fi
@@ -1189,13 +1273,13 @@ USAGE
   remote_verify_args+=(sh ops/ci/run_verify_full.sh)
 
   local verify_failed=0
-  if ! run_remote_command_in_dir "$host" "$project_dir" "${remote_verify_args[@]}"; then
+  if ! run_remote_command_in_dir "$host" "$project_dir" "$identity" "${remote_verify_args[@]}"; then
     echo "ERROR: remote verify command failed" >&2
     verify_failed=1
   fi
 
   local fetch_failed=0
-  if ! fetch_remote_verify_artifacts "$host" "$project_dir" "$out_dir"; then
+  if ! fetch_remote_verify_artifacts "$host" "$project_dir" "$out_dir" "$identity"; then
     fetch_failed=1
   fi
 
@@ -1217,6 +1301,7 @@ USAGE
 cmd_remote_register() {
   local host=""
   local project_dir=""
+  local identity=""
   local remote_cli="ci-self"
   local repo=""
   local labels=""
@@ -1229,6 +1314,7 @@ cmd_remote_register() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --host) host="${2:-}"; shift 2 ;;
+      -i|--identity) identity="${2:-}"; shift 2 ;;
       --project-dir) project_dir="${2:-}"; shift 2 ;;
       --remote-cli) remote_cli="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
@@ -1240,7 +1326,7 @@ cmd_remote_register() {
       --skip-workflow) skip_workflow=1; shift ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self remote-register --host <ssh-host> [--project-dir path] [--repo owner/repo] [--remote-cli path]
+Usage: ci-self remote-register --host <ssh-host> [-i identity_file] [--project-dir path] [--repo owner/repo] [--remote-cli path]
                                [--labels csv] [--runner-name name] [--runner-group name]
                                [--discord-webhook-url url] [--force-workflow] [--skip-workflow]
 USAGE
@@ -1254,6 +1340,7 @@ USAGE
   done
 
   [[ -z "$host" ]] && host="$CONFIG_REMOTE_HOST"
+  [[ -z "$identity" && -n "$CONFIG_REMOTE_IDENTITY" ]] && identity="$CONFIG_REMOTE_IDENTITY"
   [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
@@ -1262,8 +1349,10 @@ USAGE
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
   [[ "$force_workflow" -eq 0 ]] && force_workflow="$(config_bool_to_int "$CONFIG_FORCE_WORKFLOW")"
   [[ "$skip_workflow" -eq 0 ]] && skip_workflow="$(config_bool_to_int "$CONFIG_SKIP_WORKFLOW")"
+  [[ -n "$identity" ]] && identity="$(expand_local_path "$identity")"
 
   [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  [[ -z "$identity" || -f "$identity" ]] || { echo "ERROR: identity file not found: $identity" >&2; return 2; }
   if [[ -z "$project_dir" ]]; then
     project_dir="$(default_remote_project_dir)"
   fi
@@ -1277,12 +1366,13 @@ USAGE
   [[ "$force_workflow" -eq 1 ]] && args+=(--force-workflow)
   [[ "$skip_workflow" -eq 1 ]] && args+=(--skip-workflow)
 
-  run_remote_ci_self "$host" "$project_dir" "$remote_cli" "${args[@]}"
+  run_remote_ci_self "$host" "$project_dir" "$remote_cli" "$identity" "${args[@]}"
 }
 
 cmd_remote_run_focus() {
   local host=""
   local project_dir=""
+  local identity=""
   local remote_cli="ci-self"
   local repo=""
   local ref=""
@@ -1290,13 +1380,14 @@ cmd_remote_run_focus() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --host) host="${2:-}"; shift 2 ;;
+      -i|--identity) identity="${2:-}"; shift 2 ;;
       --project-dir) project_dir="${2:-}"; shift 2 ;;
       --remote-cli) remote_cli="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
       --ref) ref="${2:-}"; shift 2 ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self remote-run-focus --host <ssh-host> [--project-dir path] [--repo owner/repo] [--ref branch] [--remote-cli path]
+Usage: ci-self remote-run-focus --host <ssh-host> [-i identity_file] [--project-dir path] [--repo owner/repo] [--ref branch] [--remote-cli path]
 USAGE
         return 0
         ;;
@@ -1308,23 +1399,27 @@ USAGE
   done
 
   [[ -z "$host" ]] && host="$CONFIG_REMOTE_HOST"
+  [[ -z "$identity" && -n "$CONFIG_REMOTE_IDENTITY" ]] && identity="$CONFIG_REMOTE_IDENTITY"
   [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$ref" ]] && ref="$(resolve_ref "$ref")"
+  [[ -n "$identity" ]] && identity="$(expand_local_path "$identity")"
 
   [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  [[ -z "$identity" || -f "$identity" ]] || { echo "ERROR: identity file not found: $identity" >&2; return 2; }
   if [[ -z "$project_dir" ]]; then
     project_dir="$(default_remote_project_dir)"
   fi
 
   local args=(run-focus --ref "$ref")
   [[ -n "$repo" ]] && args+=(--repo "$repo")
-  run_remote_ci_self "$host" "$project_dir" "$remote_cli" "${args[@]}"
+  run_remote_ci_self "$host" "$project_dir" "$remote_cli" "$identity" "${args[@]}"
 }
 
 cmd_remote_up() {
   local host=""
   local project_dir=""
+  local identity=""
   local remote_cli="ci-self"
   local repo=""
   local ref=""
@@ -1338,6 +1433,7 @@ cmd_remote_up() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --host) host="${2:-}"; shift 2 ;;
+      -i|--identity) identity="${2:-}"; shift 2 ;;
       --project-dir) project_dir="${2:-}"; shift 2 ;;
       --remote-cli) remote_cli="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
@@ -1350,7 +1446,7 @@ cmd_remote_up() {
       --skip-workflow) skip_workflow=1; shift ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self remote-up --host <ssh-host> [--project-dir path] [--repo owner/repo] [--ref branch]
+Usage: ci-self remote-up --host <ssh-host> [-i identity_file] [--project-dir path] [--repo owner/repo] [--ref branch]
                          [--remote-cli path] [--labels csv] [--runner-name name]
                          [--runner-group name] [--discord-webhook-url url]
                          [--force-workflow] [--skip-workflow]
@@ -1365,6 +1461,7 @@ USAGE
   done
 
   [[ -z "$host" ]] && host="$CONFIG_REMOTE_HOST"
+  [[ -z "$identity" && -n "$CONFIG_REMOTE_IDENTITY" ]] && identity="$CONFIG_REMOTE_IDENTITY"
   [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$ref" ]] && ref="$(resolve_ref "$ref")"
@@ -1374,13 +1471,16 @@ USAGE
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
   [[ "$force_workflow" -eq 0 ]] && force_workflow="$(config_bool_to_int "$CONFIG_FORCE_WORKFLOW")"
   [[ "$skip_workflow" -eq 0 ]] && skip_workflow="$(config_bool_to_int "$CONFIG_SKIP_WORKFLOW")"
+  [[ -n "$identity" ]] && identity="$(expand_local_path "$identity")"
 
   [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
+  [[ -z "$identity" || -f "$identity" ]] || { echo "ERROR: identity file not found: $identity" >&2; return 2; }
   if [[ -z "$project_dir" ]]; then
     project_dir="$(default_remote_project_dir)"
   fi
 
   local register_args=(--host "$host" --project-dir "$project_dir" --remote-cli "$remote_cli")
+  [[ -n "$identity" ]] && register_args+=(-i "$identity")
   [[ -n "$repo" ]] && register_args+=(--repo "$repo")
   [[ -n "$labels" ]] && register_args+=(--labels "$labels")
   [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
@@ -1391,6 +1491,7 @@ USAGE
   cmd_remote_register "${register_args[@]}"
 
   local run_focus_args=(--host "$host" --project-dir "$project_dir" --remote-cli "$remote_cli" --ref "$ref")
+  [[ -n "$identity" ]] && run_focus_args+=(-i "$identity")
   [[ -n "$repo" ]] && run_focus_args+=(--repo "$repo")
   cmd_remote_run_focus "${run_focus_args[@]}"
 }

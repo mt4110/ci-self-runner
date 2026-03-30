@@ -31,31 +31,40 @@ ci-self config-init
 CI_SELF_REPO=mt4110/maakie-brainlab
 CI_SELF_REF=main
 CI_SELF_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
-CI_SELF_REMOTE_HOST=<you>@mac-mini.local
+CI_SELF_REMOTE_HOST=<you>@ci-runner.local
 CI_SELF_REMOTE_PROJECT_DIR=/Users/<you>/dev/maakie-brainlab
+CI_SELF_REMOTE_IDENTITY=/Users/<you>/.ssh/id_ed25519_for_ci_runner
 CI_SELF_PR_BASE=main
 ```
 
-## ネットワーク別ワンコマンド
+## 別端末の CI runner を使う
 
-同一LAN / 外出先（SSHあり, 推奨）:
+- マシンA: self-hosted runner / colima / docker を置く端末
+- マシンB: そこへ verify を依頼する手元端末
+
+まずマシンB で SSH 鍵を用意し、公開鍵をマシンA の `~/.ssh/authorized_keys` に登録します。
 
 ```bash
-ci-self remote-ci
+ssh-keygen -t ed25519 -a 100
+cat ~/.ssh/id_ed25519_for_ci_runner.pub | ssh -i ~/.ssh/id_ed25519_for_ci_runner <user>@<machine-a-host> 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+ssh -i ~/.ssh/id_ed25519_for_ci_runner -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no <user>@<machine-a-host> true
+```
+
+通ったら `remote-ci` を実行します。
+
+```bash
+ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/<project>' --repo <owner>/<repo>
 ```
 
 `remote-ci` は以下を 1 コマンドで実行します:
 
 1. SSH 鍵認証チェック（password不可）
-2. ローカル変更を Mac mini に `rsync` 同期
-3. Mac mini 側 verify 実行
+2. ローカル変更をマシンA に `rsync` 同期
+3. マシンA 側 verify 実行
 4. `out/remote/<host>/` へ結果回収
 
-未設定なら `--host --project-dir --repo` を明示してください。
-
-```bash
-ci-self remote-ci --host <user>@<mac-mini> --project-dir '~/dev/maakie-brainlab' --repo mt4110/maakie-brainlab
-```
+`remote-ci` は LAN 専用ではなく、外出先でも SSH 到達性があれば使えます。
+逆に SSH 経路が無い場合、`remote-ci` 自体は疎通を作れません。
 
 runner 初期化/復旧専用の旧導線:
 
@@ -63,11 +72,13 @@ runner 初期化/復旧専用の旧導線:
 ci-self remote-up
 ```
 
-外出先（SSHなし）:
+外出先で SSH 到達性が無い場合:
 
 ```bash
 ci-self run-focus
 ```
+
+これは GitHub 側 workflow の dispatch/watch 用の別導線であり、マシンA での即時 `remote-ci` 実行そのものの代替ではありません。
 
 ## 事前診断と自己修復
 

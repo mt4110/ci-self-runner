@@ -121,6 +121,9 @@ func TestConfigInitWritesFile(t *testing.T) {
 	if !strings.Contains(content, "CI_SELF_PROJECT_DIR="+tmp) {
 		t.Fatalf("missing project dir in config\ncontent:\n%s", content)
 	}
+	if !strings.Contains(content, "CI_SELF_REMOTE_IDENTITY=") {
+		t.Fatalf("missing remote identity placeholder in config\ncontent:\n%s", content)
+	}
 }
 
 func TestRemoteUpUsesConfigHost(t *testing.T) {
@@ -295,11 +298,15 @@ exit 0
 func TestRemoteCIRunsSyncVerifyAndFetch(t *testing.T) {
 	tmp := t.TempDir()
 	localDir := filepath.Join(tmp, "repo")
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
 	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
 		t.Fatalf("mkdir local repo failed: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write local verify script failed: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
 	}
 
 	logPath := filepath.Join(tmp, "tool.log")
@@ -347,6 +354,8 @@ exit 0
 		"remote-ci",
 		"--host",
 		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
 		"--local-dir",
 		localDir,
 		"--project-dir",
@@ -360,8 +369,68 @@ exit 0
 		t.Fatalf("expected success status output\noutput:\n%s", out)
 	}
 
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read tool log: %v", readErr)
+	}
+	logText := string(logBody)
+	if !strings.Contains(logText, "ssh -i "+identityPath) {
+		t.Fatalf("expected ssh to receive identity file\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "rsync -az --delete -e ssh -i "+identityPath) {
+		t.Fatalf("expected rsync sync to receive identity file\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "rsync -a -e ssh -i "+identityPath) {
+		t.Fatalf("expected rsync fetch to receive identity file\nlog:\n%s", logText)
+	}
+
 	statusPath := filepath.Join(localDir, "out", "remote", "mini-user-192.168.1.9", "verify-full.status")
 	if _, statErr := os.Stat(statusPath); statErr != nil {
 		t.Fatalf("expected fetched status file at %s: %v", statusPath, statErr)
+	}
+}
+
+func TestRemoteUpAcceptsIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "ssh.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\necho \"$*\" >> %q\nexit 42\n", logPath)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-up",
+		"--host",
+		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
+		"--project-dir",
+		"~/dev/zt-gateway",
+		"--skip-workflow",
+		"--ref",
+		"main",
+	)
+	if err == nil {
+		t.Fatalf("expected failure from fake ssh, got success\noutput:\n%s", out)
+	}
+	if strings.Contains(out, "unknown option for remote-up: -i") {
+		t.Fatalf("identity option was not parsed\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read ssh log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "-i "+identityPath) {
+		t.Fatalf("expected ssh call to include identity file\nlog:\n%s", string(logBody))
 	}
 }
