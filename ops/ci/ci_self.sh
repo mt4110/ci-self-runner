@@ -1036,6 +1036,23 @@ run_remote_verify_wrapper() {
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q" < "$ROOT_DIR/ops/ci/run_verify_full.sh"
 }
 
+probe_remote_verify_artifacts() {
+  local host="$1"
+  local project_dir="$2"
+  local identity="${3:-}"
+  local remote_cd_q
+  local script_q
+  local remote_script
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
+
+  remote_cd_q="$(remote_path_for_shell "$project_dir")"
+  printf -v remote_script 'set -euo pipefail; cd %s; if [[ -f out/verify-full.status ]]; then echo "OK: remote_artifacts status_file=$PWD/out/verify-full.status"; else echo "WARN: remote_artifacts status_file_missing=$PWD/out/verify-full.status"; fi; if [[ -d out/logs ]]; then echo "OK: remote_artifacts logs_dir=$PWD/out/logs"; else echo "WARN: remote_artifacts logs_dir_missing=$PWD/out/logs"; fi' \
+    "$remote_cd_q"
+  script_q="$(quote_words "$remote_script")"
+  "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
+}
+
 first_existing_public_key() {
   local key=""
   for key in \
@@ -1183,15 +1200,42 @@ fetch_remote_verify_artifacts() {
   if "${rsync_base[@]}" "$host:$project_dir/out/verify-full.status" "$out_dir/"; then
     echo "OK: fetch status_file=$out_dir/verify-full.status"
   else
-    echo "ERROR: fetch status_file failed host=$host path=$project_dir/out/verify-full.status" >&2
-    failed=1
+    local remote_cd_q
+    local remote_script
+    local script_q
+    local ssh_cmd=(ssh)
+    local tmp_status="$out_dir/verify-full.status.tmp"
+    [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
+    remote_cd_q="$(remote_path_for_shell "$project_dir")"
+    printf -v remote_script 'set -euo pipefail; cd %s; test -f out/verify-full.status; cat out/verify-full.status' "$remote_cd_q"
+    script_q="$(quote_words "$remote_script")"
+    if "${ssh_cmd[@]}" "$host" "bash -lc $script_q" > "$tmp_status" && grep -q 'status=' "$tmp_status"; then
+      mv "$tmp_status" "$out_dir/verify-full.status"
+      echo "OK: fetch status_file=$out_dir/verify-full.status source=ssh_fallback"
+    else
+      rm -f "$tmp_status"
+      echo "ERROR: fetch status_file failed host=$host path=$project_dir/out/verify-full.status" >&2
+      failed=1
+    fi
   fi
 
   if "${rsync_base[@]}" "$host:$project_dir/out/logs/" "$out_dir/logs/"; then
     echo "OK: fetch logs_dir=$out_dir/logs"
   else
-    echo "ERROR: fetch logs failed host=$host path=$project_dir/out/logs/" >&2
-    failed=1
+    local remote_cd_q
+    local remote_script
+    local script_q
+    local ssh_cmd=(ssh)
+    [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
+    remote_cd_q="$(remote_path_for_shell "$project_dir")"
+    printf -v remote_script 'set -euo pipefail; cd %s; test -d out/logs; tar -cf - -C out logs' "$remote_cd_q"
+    script_q="$(quote_words "$remote_script")"
+    if "${ssh_cmd[@]}" "$host" "bash -lc $script_q" | tar -xf - -C "$out_dir"; then
+      echo "OK: fetch logs_dir=$out_dir/logs source=ssh_fallback"
+    else
+      echo "ERROR: fetch logs failed host=$host path=$project_dir/out/logs/" >&2
+      failed=1
+    fi
   fi
 
   return "$failed"
@@ -1358,6 +1402,7 @@ USAGE
     echo "ERROR: remote verify command failed" >&2
     verify_failed=1
   fi
+  probe_remote_verify_artifacts "$host" "$project_dir" "$identity" || true
 
   local fetch_failed=0
   if ! fetch_remote_verify_artifacts "$host" "$project_dir" "$out_dir" "$identity"; then

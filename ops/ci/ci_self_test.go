@@ -684,6 +684,107 @@ exit 0
 	}
 }
 
+func TestRemoteCIFetchFallsBackToSSH(t *testing.T) {
+	tmp := t.TempDir()
+	localDir := filepath.Join(tmp, "repo")
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	fixtureDir := filepath.Join(tmp, "remote-fixture")
+	fixtureLogsDir := filepath.Join(fixtureDir, "logs")
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		t.Fatalf("mkdir local repo failed: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+	if err := os.MkdirAll(fixtureLogsDir, 0o755); err != nil {
+		t.Fatalf("mkdir fixture logs failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtureDir, "verify-full.status"), []byte("status=OK\n"), 0o644); err != nil {
+		t.Fatalf("write fixture status failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtureLogsDir, "verify.log"), []byte("ok\n"), 0o644); err != nil {
+		t.Fatalf("write fixture log failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "tool.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "ssh $*" >> %q
+if [[ "$*" == *"BatchMode=yes"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"verify-full.status"* && "$*" == *"cat"* ]]; then
+  cat %q
+  exit 0
+fi
+if [[ "$*" == *"tar"* && "$*" == *"logs"* ]]; then
+  tar -cf - -C %q logs
+  exit 0
+fi
+if [[ "$*" == *"mkdir -p"* || "$*" == *"sh"* || "$*" == *"status_file="* || "$*" == *"logs_dir="* ]]; then
+  exit 0
+fi
+exit 1
+`, logPath, filepath.Join(fixtureDir, "verify-full.status"), fixtureDir)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	rsyncPath := filepath.Join(tmp, "rsync")
+	rsyncScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "rsync $*" >> %q
+src="${@: -2:1}"
+if printf '%%s' "$src" | grep -q '/out/verify-full.status$'; then
+  exit 23
+fi
+if printf '%%s' "$src" | grep -q '/out/logs/$'; then
+  exit 23
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(rsyncPath, []byte(rsyncScript), 0o755); err != nil {
+		t.Fatalf("write fake rsync failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-ci",
+		"--host",
+		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
+		"--local-dir",
+		localDir,
+		"--project-dir",
+		"~/dev/zt-gateway",
+		"--skip-bootstrap",
+	)
+	if err != nil {
+		t.Fatalf("remote-ci failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "source=ssh_fallback") {
+		t.Fatalf("expected ssh fallback fetch output\noutput:\n%s", out)
+	}
+
+	statusPath := filepath.Join(localDir, "out", "remote", "mini-user-192.168.1.9", "verify-full.status")
+	if content, readErr := os.ReadFile(statusPath); readErr != nil {
+		t.Fatalf("expected fetched status file via ssh fallback: %v", readErr)
+	} else if !strings.Contains(string(content), "status=OK") {
+		t.Fatalf("unexpected status file content: %s", string(content))
+	}
+
+	logFilePath := filepath.Join(localDir, "out", "remote", "mini-user-192.168.1.9", "logs", "verify.log")
+	if content, readErr := os.ReadFile(logFilePath); readErr != nil {
+		t.Fatalf("expected fetched log via ssh fallback: %v", readErr)
+	} else if strings.TrimSpace(string(content)) != "ok" {
+		t.Fatalf("unexpected fetched log content: %s", string(content))
+	}
+}
+
 func TestRemoteUpAcceptsIdentity(t *testing.T) {
 	tmp := t.TempDir()
 	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
