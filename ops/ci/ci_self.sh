@@ -1007,6 +1007,35 @@ run_remote_command_in_dir() {
   "${ssh_cmd[@]}" "$host" "bash -lc $script_q"
 }
 
+run_remote_verify_wrapper() {
+  local host="$1"
+  local project_dir="$2"
+  local identity="${3:-}"
+  local verify_dry_run="${4:-1}"
+  local verify_gha_sync="${5:-1}"
+  local github_sha="${6:-}"
+  local github_ref="${7:-}"
+  local remote_cd_q
+  local script_q
+  local remote_script
+  local ssh_cmd=(ssh)
+  [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
+
+  remote_cd_q="$(remote_path_for_shell "$project_dir")"
+  printf -v remote_script 'set -euo pipefail; cd %s; export REPO_DIR="$PWD" OUT_DIR="$PWD/out" VERIFY_DRY_RUN=%q VERIFY_GHA_SYNC=%q GITHUB_ACTIONS=%q' \
+    "$remote_cd_q" "$verify_dry_run" "$verify_gha_sync" "true"
+  if [[ -n "$github_sha" ]]; then
+    printf -v remote_script '%s GITHUB_SHA=%q' "$remote_script" "$github_sha"
+  fi
+  if [[ -n "$github_ref" ]]; then
+    printf -v remote_script '%s GITHUB_REF_NAME=%q' "$remote_script" "$github_ref"
+  fi
+  printf -v remote_script '%s; sh -s' "$remote_script"
+  script_q="$(quote_words "$remote_script")"
+  echo "OK: ssh host=$host dir=$project_dir cmd=remote_verify_wrapper"
+  "${ssh_cmd[@]}" "$host" "bash -lc $script_q" < "$ROOT_DIR/ops/ci/run_verify_full.sh"
+}
+
 first_existing_public_key() {
   local key=""
   for key in \
@@ -1324,13 +1353,8 @@ USAGE
   ref="$(git -C "$local_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   [[ "$ref" == "HEAD" ]] && ref=""
 
-  local remote_verify_args=(env "VERIFY_DRY_RUN=$verify_dry_run" "VERIFY_GHA_SYNC=$verify_gha_sync" "GITHUB_ACTIONS=true")
-  [[ -n "$sha" ]] && remote_verify_args+=("GITHUB_SHA=$sha")
-  [[ -n "$ref" ]] && remote_verify_args+=("GITHUB_REF_NAME=$ref")
-  remote_verify_args+=(sh ops/ci/run_verify_full.sh)
-
   local verify_failed=0
-  if ! run_remote_command_in_dir "$host" "$project_dir" "$identity" "${remote_verify_args[@]}"; then
+  if ! run_remote_verify_wrapper "$host" "$project_dir" "$identity" "$verify_dry_run" "$verify_gha_sync" "$sha" "$ref"; then
     echo "ERROR: remote verify command failed" >&2
     verify_failed=1
   fi

@@ -323,11 +323,8 @@ func TestRemoteCIRunsSyncVerifyAndFetch(t *testing.T) {
 	tmp := t.TempDir()
 	localDir := filepath.Join(tmp, "repo")
 	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
-	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatalf("mkdir local repo failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write local verify script failed: %v", err)
 	}
 	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
 		t.Fatalf("write identity file failed: %v", err)
@@ -426,6 +423,12 @@ exit 0
 	if !strings.Contains(logText, "--exclude .git/") {
 		t.Fatalf("expected rsync sync to exclude git dir by default\nlog:\n%s", logText)
 	}
+	if !strings.Contains(out, "cmd=remote_verify_wrapper") {
+		t.Fatalf("expected remote verify wrapper invocation\noutput:\n%s", out)
+	}
+	if !strings.Contains(logText, "sh\\ -s") {
+		t.Fatalf("expected remote verify wrapper to stream script over ssh\nlog:\n%s", logText)
+	}
 	if !strings.Contains(logText, "rsync -a -e ssh -i "+identityPath) {
 		t.Fatalf("expected rsync fetch to receive identity file\nlog:\n%s", logText)
 	}
@@ -440,11 +443,8 @@ func TestRemoteCIWithTildeProjectDirUsesRemoteHome(t *testing.T) {
 	tmp := t.TempDir()
 	localDir := filepath.Join(tmp, "veil-rs")
 	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
-	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatalf("mkdir local repo failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write local verify script failed: %v", err)
 	}
 	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
 		t.Fatalf("write identity file failed: %v", err)
@@ -524,11 +524,8 @@ func TestRemoteCISyncGitDirOptIn(t *testing.T) {
 	tmp := t.TempDir()
 	localDir := filepath.Join(tmp, "repo")
 	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
-	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatalf("mkdir local repo failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write local verify script failed: %v", err)
 	}
 	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
 		t.Fatalf("write identity file failed: %v", err)
@@ -606,11 +603,8 @@ func TestRemoteCIFallsBackForLegacyRsync(t *testing.T) {
 	tmp := t.TempDir()
 	localDir := filepath.Join(tmp, "repo")
 	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
-	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatalf("mkdir local repo failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write local verify script failed: %v", err)
 	}
 	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
 		t.Fatalf("write identity file failed: %v", err)

@@ -52,8 +52,8 @@ ci-self remote-ci --host ci@192.168.1.20 -i ~/.ssh/id_ed25519_for_ci_runner --pr
 
 1. SSH 公開鍵認証（password禁止）を検証
 2. マシンB のローカル作業ツリーをマシンA の `--project-dir` へ `rsync` 同期
-3. （`--repo` 指定時）マシンA 上で `ci-self register` をベストエフォート実行
-4. マシンA で `ops/ci/run_verify_full.sh` を実行
+3. （`--repo` 指定時かつ remote `ci-self` 利用可能時）マシンA 上で `ci-self register` をベストエフォート実行
+4. マシンA で、同梱の verify wrapper を SSH 経由で実行
 5. `verify-full.status` と `out/logs` をマシンB の `out/remote/<host>/` に回収
 
 同期時の既定:
@@ -156,6 +156,7 @@ rsync  version 3.4.1  protocol version 32
 - `--local-dir` を使うと、マシンB 側の同期元を明示できる
 - `--sync-git-dir` を付けると `.git/` も同期する。通常は不要
 - `*.md`, `*.log`, `*.txt`, `build/`, `bin/`, `10MB超ファイル` は既定除外していない。tracked asset / fixture / source の可能性があるため
+- remote `ci-self` 未導入でも verify 自体は動く。影響するのは bootstrap だけ
 - `--repo` を省略すると bootstrap は skip されるが、同期済みプロジェクト上での standalone verify は実行できる
 - runner 初期化/復旧専用の旧導線は `ci-self remote-up`
 
