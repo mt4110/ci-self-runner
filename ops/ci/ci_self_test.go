@@ -401,7 +401,8 @@ exit 0
 	if !strings.Contains(logText, "ssh -i "+identityPath) {
 		t.Fatalf("expected ssh to receive identity file\nlog:\n%s", logText)
 	}
-	if !strings.Contains(logText, "rsync -az --delete --human-readable --info=progress2 -e ssh -i "+identityPath) {
+	if !strings.Contains(logText, "rsync -az --delete -e ssh -i "+identityPath+" --human-readable --info=progress2") &&
+		!strings.Contains(logText, "rsync -az --delete --human-readable --info=progress2 -e ssh -i "+identityPath) {
 		t.Fatalf("expected rsync sync to receive identity file\nlog:\n%s", logText)
 	}
 	if !strings.Contains(logText, "--exclude target/") {
@@ -598,6 +599,94 @@ exit 0
 	logText := string(logBody)
 	if strings.Contains(logText, "--exclude .git/") {
 		t.Fatalf("expected sync-git-dir to keep .git in sync set\nlog:\n%s", logText)
+	}
+}
+
+func TestRemoteCIFallsBackForLegacyRsync(t *testing.T) {
+	tmp := t.TempDir()
+	localDir := filepath.Join(tmp, "repo")
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	if err := os.MkdirAll(filepath.Join(localDir, "ops", "ci"), 0o755); err != nil {
+		t.Fatalf("mkdir local repo failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "ops", "ci", "run_verify_full.sh"), []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write local verify script failed: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "tool.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "ssh $*" >> %q
+if [[ "$*" == *"BatchMode=yes"* ]]; then
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	rsyncPath := filepath.Join(tmp, "rsync")
+	rsyncScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "rsync $*" >> %q
+if [[ "$*" == *"--info=progress2 --version"* ]]; then
+  exit 1
+fi
+src="${@: -2:1}"
+dst="${@: -1}"
+if printf '%%s' "$src" | grep -q '/out/verify-full.status$'; then
+  mkdir -p "$dst"
+  cat > "${dst%%/}/verify-full.status" <<'EOF'
+status=OK
+EOF
+  exit 0
+fi
+if printf '%%s' "$src" | grep -q '/out/logs/$'; then
+  mkdir -p "${dst%%/}"
+  echo "ok" > "${dst%%/}/verify.log"
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(rsyncPath, []byte(rsyncScript), 0o755); err != nil {
+		t.Fatalf("write fake rsync failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-ci",
+		"--host",
+		"mini-user@192.168.1.9",
+		"-i",
+		identityPath,
+		"--local-dir",
+		localDir,
+		"--project-dir",
+		"~/dev/zt-gateway",
+		"--skip-bootstrap",
+	)
+	if err != nil {
+		t.Fatalf("remote-ci failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "falling back to -h --progress") {
+		t.Fatalf("expected fallback warning in output\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read tool log: %v", readErr)
+	}
+	logText := string(logBody)
+	if !strings.Contains(logText, "rsync -az --delete -e ssh -i "+identityPath+" -h --progress") &&
+		!strings.Contains(logText, "rsync -az --delete -h --progress -e ssh -i "+identityPath) {
+		t.Fatalf("expected legacy rsync fallback flags\nlog:\n%s", logText)
 	}
 }
 

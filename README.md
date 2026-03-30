@@ -36,6 +36,8 @@ ci-self up
 
 `remote-ci` の同期元は、現在の作業リポジトリです。対象 repo のルートで実行するか、`--local-dir <path>` で明示してください。
 
+`remote-ci` はローカル `rsync` コマンドをそのまま使います。macOS 既定の `openrsync` だと古く、進捗表示や互換性で不利です。
+
 ```bash
 ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/<project>' --repo <owner>/<repo>
 ```
@@ -58,6 +60,7 @@ ci-self remote-ci --host ci@192.168.1.20 -i ~/.ssh/id_ed25519_for_ci_runner --pr
 
 - `target/`, `dist/`, `node_modules/`, `.venv/`, `coverage/`, `.next/` などの生成物ディレクトリと `.git/` は同期しない
 - `rsync --info=progress2` で進捗を表示する
+- ローカル `rsync` が `--info=progress2` 非対応なら `-h --progress` へ自動フォールバックする
 - build/test が Git メタデータを直接参照する repo だけは `--sync-git-dir` で `.git/` 同期を有効化する
 
 ### 初回だけ必要な準備（マシンB -> マシンA）
@@ -84,6 +87,42 @@ ssh -i ~/.ssh/id_ed25519_for_ci_runner -o BatchMode=yes -o PasswordAuthenticatio
 
 ```bash
 ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/<project>' --repo <owner>/<repo>
+```
+
+### rsync バージョン注意
+
+macOS 既定の `rsync` が古い場合があります。
+
+```bash
+rsync --version
+```
+
+古い例:
+
+```text
+openrsync: protocol version 29
+rsync version 2.6.9 compatible
+```
+
+推奨:
+
+```bash
+brew install rsync
+```
+
+`alias rsync=...` だけでは `ci-self` の bash スクリプトには効かないことがあります。`PATH` の先頭に Homebrew 版を入れてください。
+
+Apple Silicon の例:
+
+```bash
+echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+確認例:
+
+```text
+rsync  version 3.4.1  protocol version 32
 ```
 
 公開鍵未登録時は、`remote-ci` 自体が `authorized_keys` 登録のヒントを出して停止します。

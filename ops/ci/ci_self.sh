@@ -1084,11 +1084,17 @@ sync_local_project_to_remote() {
   local project_dir="$3"
   local identity="${4:-}"
   local sync_git_dir="${5:-0}"
-  local rsync_cmd=(rsync -az --delete --human-readable --info=progress2)
+  local rsync_cmd=(rsync -az --delete)
   local ssh_rsh=""
   if [[ -n "$identity" ]]; then
     ssh_rsh="$(quote_words ssh -i "$identity")"
     rsync_cmd+=(-e "$ssh_rsh")
+  fi
+  if rsync --info=progress2 --version >/dev/null 2>&1; then
+    rsync_cmd+=(--human-readable --info=progress2)
+  else
+    rsync_cmd+=(-h --progress)
+    echo "WARN: local rsync does not support --info=progress2; falling back to -h --progress" >&2
   fi
   echo "OK: rsync host=$host src=$local_dir dst=$project_dir"
   rsync_cmd+=(

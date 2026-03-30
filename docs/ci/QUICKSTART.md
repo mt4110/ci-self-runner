@@ -66,6 +66,7 @@ ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_run
 4. `out/remote/<host>/` へ結果回収
 
 既定では `target/`, `dist/`, `node_modules/`, `.venv/`, `coverage/`, `.next/` などの生成物ディレクトリと `.git/` を同期せず、`rsync --info=progress2` で進捗を表示します。
+ローカル `rsync` が古い場合は `-h --progress` に自動フォールバックしますが、Homebrew の新しい `rsync` を推奨します。
 repo 側の build/test が Git メタデータを直接読む場合だけ `--sync-git-dir` を付けてください。
 
 `remote-ci` は LAN 専用ではなく、外出先でも SSH 到達性があれば使えます。
