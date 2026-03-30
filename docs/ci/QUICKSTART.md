@@ -52,6 +52,8 @@ ssh -i ~/.ssh/id_ed25519_for_ci_runner -o BatchMode=yes -o PasswordAuthenticatio
 
 通ったら `remote-ci` を実行します。
 
+`remote-ci` の同期元は、現在の作業リポジトリです。対象 repo のルートで実行するか、`--local-dir <path>` で明示してください。
+
 ```bash
 ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/<project>' --repo <owner>/<repo>
 ```

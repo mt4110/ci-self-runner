@@ -34,6 +34,8 @@ ci-self up
 
 マシンB から 1 コマンドで「鍵認証確認 -> 同期 -> マシンA実行 -> 結果回収」まで行います。
 
+`remote-ci` の同期元は、現在の作業リポジトリです。対象 repo のルートで実行するか、`--local-dir <path>` で明示してください。
+
 ```bash
 ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_runner --project-dir '~/dev/<project>' --repo <owner>/<repo>
 ```
@@ -104,6 +106,7 @@ ci-self remote-ci --host <user>@<machine-a-host> -i ~/.ssh/id_ed25519_for_ci_run
 
 - `--host` は `ssh` の接続先文字列（`user@host` / IP / `~/.ssh/config` の Host 別名）
 - `-i` / `--identity` で SSH 鍵ファイルを指定できる。毎回省略したい場合は `.ci-self.env` の `CI_SELF_REMOTE_IDENTITY` を使う
+- `remote-ci` の同期元はデフォルトで「今いる repo」。別 repo を送りたい場合は `--local-dir` を使う
 - `--project-dir` はマシンA 側の配置先パス。`~` を使う場合は `--project-dir '~/<path>'` のようにクオート
 - `--local-dir` を使うと、マシンB 側の同期元を明示できる
 - `--repo` を省略すると bootstrap は skip されるが、同期済みプロジェクト上での standalone verify は実行できる

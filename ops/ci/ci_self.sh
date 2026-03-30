@@ -41,7 +41,7 @@ trim() {
 expand_local_path() {
   local p="$1"
   if [[ "$p" == "~/"* ]]; then
-    printf '%s\n' "${HOME}/${p#~/}"
+    printf '%s\n' "${HOME}/${p#"~/"}"
   else
     printf '%s\n' "$p"
   fi
@@ -960,10 +960,28 @@ sanitize_for_path_segment() {
   printf '%s\n' "$out"
 }
 
+ensure_default_local_dir_matches_repo() {
+  local local_dir="$1"
+  local repo="$2"
+  local local_dir_was_explicit="$3"
+  [[ -n "$repo" ]] || return 0
+  [[ "$local_dir_was_explicit" -eq 1 ]] && return 0
+
+  local expected_name="${repo##*/}"
+  local actual_name
+  actual_name="$(basename "$local_dir")"
+  if [[ "$actual_name" != "$expected_name" ]]; then
+    echo "ERROR: default local-dir appears to be the wrong project: $local_dir" >&2
+    echo "HINT: repo=$repo expects a local dir like .../$expected_name" >&2
+    echo "HINT: run ci-self from the target repo root, or pass --local-dir <path>" >&2
+    return 1
+  fi
+}
+
 remote_path_for_shell() {
   local path="$1"
   if [[ "$path" == "~/"* ]]; then
-    printf '\$HOME/%s\n' "${path#~/}"
+    printf '\$HOME/%s\n' "${path#"~/"}"
   else
     printf '%q\n' "$path"
   fi
@@ -1150,7 +1168,7 @@ run_remote_ci_self() {
 
   remote_args_q="$(quote_words "${remote_args[@]}")"
   if [[ "$project_dir" == "~/"* ]]; then
-    remote_cd_q="\$HOME/${project_dir#~/}"
+    remote_cd_q="\$HOME/${project_dir#"~/"}"
   else
     printf -v remote_cd_q '%q' "$project_dir"
   fi
@@ -1166,6 +1184,7 @@ cmd_remote_ci() {
   local local_dir=""
   local out_dir=""
   local identity=""
+  local local_dir_was_explicit=0
   local remote_cli="ci-self"
   local repo=""
   local labels=""
@@ -1182,7 +1201,7 @@ cmd_remote_ci() {
       --host) host="${2:-}"; shift 2 ;;
       -i|--identity) identity="${2:-}"; shift 2 ;;
       --project-dir) project_dir="${2:-}"; shift 2 ;;
-      --local-dir) local_dir="${2:-}"; shift 2 ;;
+      --local-dir) local_dir="${2:-}"; local_dir_was_explicit=1; shift 2 ;;
       --out-dir) out_dir="${2:-}"; shift 2 ;;
       --remote-cli) remote_cli="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
@@ -1228,6 +1247,7 @@ USAGE
   [[ -n "$identity" ]] && identity="$(expand_local_path "$identity")"
   [[ -d "$local_dir" ]] || { echo "ERROR: --local-dir not found: $local_dir" >&2; return 2; }
   [[ -z "$identity" || -f "$identity" ]] || { echo "ERROR: identity file not found: $identity" >&2; return 2; }
+  ensure_default_local_dir_matches_repo "$local_dir" "$repo" "$local_dir_was_explicit"
 
   if [[ -z "$out_dir" ]]; then
     out_dir="$local_dir/out/remote/$(sanitize_for_path_segment "$host")"
