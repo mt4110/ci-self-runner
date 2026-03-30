@@ -213,6 +213,79 @@ func TestRemoteUpUsesConfigHost(t *testing.T) {
 	}
 }
 
+func TestRemoteCIConfiguredProjectDirSkipsRepoNameGuard(t *testing.T) {
+	tmp := t.TempDir()
+	localDir := filepath.Join(tmp, "backend-v2")
+	identityPath := filepath.Join(tmp, "id_ed25519_for_mac_mini")
+	cfg := filepath.Join(tmp, ".ci-self.env")
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		t.Fatalf("mkdir local repo failed: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("dummy-private-key"), 0o600); err != nil {
+		t.Fatalf("write identity file failed: %v", err)
+	}
+	cfgContent := "CI_SELF_PROJECT_DIR=" + localDir + "\nCI_SELF_REMOTE_HOST=mini-user@192.168.1.9\nCI_SELF_REMOTE_PROJECT_DIR=~/dev/backend\n"
+	if err := os.WriteFile(cfg, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "tool.log")
+	sshPath := filepath.Join(tmp, "ssh")
+	sshScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "ssh $*" >> %q
+if [[ "$*" == *"BatchMode=yes"* ]]; then
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write fake ssh failed: %v", err)
+	}
+
+	rsyncPath := filepath.Join(tmp, "rsync")
+	rsyncScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "rsync $*" >> %q
+src="${@: -2:1}"
+dst="${@: -1}"
+if printf '%%s' "$src" | grep -q '/out/verify-full.status$'; then
+  mkdir -p "$dst"
+  cat > "${dst%%/}/verify-full.status" <<'EOF'
+status=OK
+EOF
+  exit 0
+fi
+if printf '%%s' "$src" | grep -q '/out/logs/$'; then
+  mkdir -p "${dst%%/}"
+  echo "ok" > "${dst%%/}/verify.log"
+  exit 0
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(rsyncPath, []byte(rsyncScript), 0o755); err != nil {
+		t.Fatalf("write fake rsync failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"remote-ci",
+		"--repo",
+		"mt4110/backend",
+		"-i",
+		identityPath,
+		"--skip-bootstrap",
+	)
+	if err != nil {
+		t.Fatalf("remote-ci should accept configured local project dir with mismatched basename: %v\noutput:\n%s", err, out)
+	}
+	if strings.Contains(out, "ERROR: default local-dir appears to be the wrong project") {
+		t.Fatalf("repo-name guard should not fire for configured project dir\noutput:\n%s", out)
+	}
+}
+
 func TestRunWatchResolvesVerifyWorkflowID(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "gh.log")

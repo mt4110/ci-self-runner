@@ -461,7 +461,6 @@ cmd_register() {
   local discord_webhook_url=""
   local force_workflow=0
   local skip_workflow=0
-  local skip_dispatch=1
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -474,7 +473,7 @@ cmd_register() {
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
       --force-workflow) force_workflow=1; shift ;;
       --skip-workflow) skip_workflow=1; shift ;;
-      --skip-dispatch) skip_dispatch=1; shift ;;
+      --skip-dispatch) shift ;;
       -h|--help)
         cat <<'USAGE'
 Usage: ci-self register [--repo owner/repo] [--repo-dir path] [--labels csv] [--runner-name name] [--runner-group name] [--discord-webhook-url url] [--force-workflow] [--skip-workflow] [--skip-dispatch]
@@ -505,7 +504,7 @@ USAGE
   [[ -n "$discord_webhook_url" ]] && args+=(--discord-webhook-url "$discord_webhook_url")
   [[ "$force_workflow" -eq 1 ]] && args+=(--force-workflow)
   [[ "$skip_workflow" -eq 1 ]] && args+=(--skip-workflow)
-  [[ "$skip_dispatch" -eq 1 ]] && args+=(--skip-dispatch)
+  args+=(--skip-dispatch)
 
   bash "$ROOT_DIR/ops/ci/onboard_and_verify.sh" "${args[@]}"
 }
@@ -1405,6 +1404,9 @@ USAGE
   [[ -n "$host" ]] || { echo "ERROR: --host is required" >&2; return 2; }
   [[ -z "$project_dir" ]] && project_dir="$(default_remote_project_dir)"
   [[ -z "$local_dir" ]] && local_dir="$(default_local_project_dir)"
+  if [[ "$local_dir_was_explicit" -eq 0 && -n "$CONFIG_PROJECT_DIR" && "$local_dir" == "$CONFIG_PROJECT_DIR" ]]; then
+    local_dir_was_explicit=1
+  fi
   local_dir="$(expand_local_path "$local_dir")"
   [[ -n "$identity" ]] && identity="$(expand_local_path "$identity")"
   [[ -d "$local_dir" ]] || { echo "ERROR: --local-dir not found: $local_dir" >&2; return 2; }
