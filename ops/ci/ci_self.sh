@@ -957,7 +957,7 @@ quote_words() {
 
 quote_bash_lc_script() {
   local script="$1"
-  script="${script//\'/\'\"\'\"\'}"
+  script=${script//\'/\'"\'"\'}
   printf "'%s'\n" "$script"
 }
 
