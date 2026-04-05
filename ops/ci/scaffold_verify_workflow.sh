@@ -18,6 +18,8 @@ Behavior:
     - nix mode: flake.nix exists
     - go mode: go.mod exists
     - minimal mode: fallback
+  - On an interactive TTY, existing verify.yml can be overwritten after [y/N] confirmation.
+  - In non-interactive runs, --force is required to overwrite an existing verify.yml.
   - Without --apply, prints generated YAML to stdout.
 USAGE
 }

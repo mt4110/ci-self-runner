@@ -38,6 +38,11 @@ trim() {
   printf '%s\n' "$s"
 }
 
+parse_decimal_index() {
+  local raw="$1"
+  printf '%s\n' "$((10#$raw))"
+}
+
 expand_local_path() {
   local p="$1"
   if [[ "$p" == "~/"* ]]; then
@@ -382,13 +387,15 @@ resolve_requested_job() {
   fi
 
   if [[ "$requested_job" =~ ^[0-9]+$ ]]; then
-    if (( requested_job >= 1 && requested_job <= ${#jobs[@]} )); then
-      job="${jobs[$((requested_job - 1))]}"
-      log_ts_err "OK: selected job=$job (index=$requested_job)"
+    local requested_job_index=0
+    requested_job_index="$(parse_decimal_index "$requested_job")"
+    if (( requested_job_index >= 1 && requested_job_index <= ${#jobs[@]} )); then
+      job="${jobs[$((requested_job_index - 1))]}"
+      log_ts_err "OK: selected job=$job (index=$requested_job_index)"
       printf '%s\n' "$job"
       return 0
     fi
-    log_ts_err "ERROR: job index out of range: $requested_job"
+    log_ts_err "ERROR: job index out of range: $requested_job_index"
     log_ts_err "HINT: choose 1..${#jobs[@]} or pass an actual job id"
     print_act_jobs_hint "$project_dir" "$workflow" "$event_name"
     return 2
@@ -458,8 +465,10 @@ select_local_workflow() {
         printf '> 不正な入力です。番号か q を入力してください。\n' >&2
         ;;
       *)
-        if (( choice >= 1 && choice <= ${#workflows[@]} )); then
-          selected="${workflows[$((choice - 1))]}"
+        local choice_index=0
+        choice_index="$(parse_decimal_index "$choice")"
+        if (( choice_index >= 1 && choice_index <= ${#workflows[@]} )); then
+          selected="${workflows[$((choice_index - 1))]}"
           log_ts_err "OK: selected workflow=$selected"
           printf '%s\n' "$selected"
           return 0

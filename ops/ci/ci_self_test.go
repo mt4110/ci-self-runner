@@ -287,6 +287,54 @@ fi
 	}
 }
 
+func TestActInteractiveWorkflowSelectionAcceptsLeadingZeroIndex(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "alpha.yml"), []byte("name: Alpha Flow\n"), 0o644); err != nil {
+		t.Fatalf("write alpha workflow failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "beta.yaml"), []byte("name: Beta Flow\n"), 0o644); err != nil {
+		t.Fatalf("write beta workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> %q
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID  Job name  Workflow name  Workflow file  Events
+0      verify  verify    Beta Flow      beta.yaml      workflow_dispatch
+EOF
+  exit 0
+fi
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnvInput(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"02\n",
+		"act",
+		"--project-dir",
+		tmp,
+		"--list",
+	)
+	if err != nil {
+		t.Fatalf("interactive act list with leading zero failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: selected workflow="+filepath.Join(tmp, ".github", "workflows", "beta.yaml")) {
+		t.Fatalf("expected selected workflow output\noutput:\n%s", out)
+	}
+}
+
 func TestActInteractiveWorkflowSelectionQuit(t *testing.T) {
 	tmp := t.TempDir()
 	workflowDir := filepath.Join(tmp, ".github", "workflows")
@@ -512,6 +560,60 @@ echo "$*" >> %q
 	}
 	if !strings.Contains(out, "OK: selected job=verify-full (index=2)") {
 		t.Fatalf("expected numeric selection log\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "-j verify-full") {
+		t.Fatalf("expected resolved job id in act invocation\nlog:\n%s", string(logBody))
+	}
+}
+
+func TestActResolvesLeadingZeroJobIndex(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+1      verify-full  verify-full    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "$*" >> %q
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"02",
+	)
+	if err != nil {
+		t.Fatalf("leading-zero job selection failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: selected job=verify-full (index=2)") {
+		t.Fatalf("expected normalized numeric selection log\noutput:\n%s", out)
 	}
 
 	logBody, readErr := os.ReadFile(logPath)
