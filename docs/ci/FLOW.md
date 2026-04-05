@@ -8,7 +8,7 @@
 
 ## 推奨フロー
 
-1) MacBook: 編集 + verify-lite（速い）
+1) MacBook: 編集 + `ci-self act --job verify-lite` で局所の概算時間を見る、または verify-lite（速い）
 2) MacBook → Mac mini: verify-full（重い）
 3) Mac mini: `verify-full` 実行後に `review-pack` で証拠bundle生成
 4) MacBook: gh で PR 作成（1回だけ）
@@ -20,6 +20,7 @@
 
 - 実行場所: Workstation（MacBook）
 - 標準入口: `ops/ci/run_verify_lite.sh`
+- 局所計測入口: `ci-self act --job verify-lite`（概算時間）
 - 目的: 早い失敗検出（公式推奨lint + 単体テスト）
 - Go公式推奨: `gofmt -l .` / `go vet ./...` / `go test ./...`
 - 出力: `out/verify-lite.status` と `OK:/SKIP:/ERROR:` ログ

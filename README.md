@@ -18,6 +18,8 @@ cd ~/dev/<target-repo>
 ci-self up
 ```
 
+`ci-self act` で局所の概算時間を測る場合は、先に `brew install act` が必要です。
+
 - `ci-self up` は `register + run-focus` を連続実行
 - `verify.yml` / PRテンプレートが無ければ自動雛形を生成
 - 雛形の生成はローカルファイル変更のみ（GitHub反映には commit/push が必要）
@@ -192,9 +194,48 @@ CI_SELF_PR_BASE=main
 
 以後はオプションを減らして実行できます。
 
+## GitHub権限なしで verify を絞って計測する
+
+`gh workflow run` を使わず、ローカルで選んだ job だけを回して、局所の概算時間を見たいときは `act` 導線を使えます。
+
+```bash
+brew install act
+cd ~/dev/<target-repo>
+ci-self act
+ci-self act --list
+ci-self act --job <job-id>
+
+# どこからでも明示指定できる
+ci-self act --project-dir ~/dev/<target-repo> --job <job-id>
+```
+
+**この計測値はローカルでの概算です。実際の GitHub Actions / `remote-ci` / 実機 self-hosted runner の所要時間とは異なる場合があります。**
+
+ポイント:
+
+- `ci-self act` は対象 repo の `.github/workflows/*.yml|*.yaml` を見る
+- `--workflow` を省略すると、対象 repo の `.github/workflows/*.yml|*.yaml` を見て、複数ある場合は `> どのworkflowを、actで実行したいですか？` と対話選択する
+- 選択画面では `q` で抜けられる
+- まず `ci-self act --list` で job id を確認してから、`--job <job-id>` を付ける
+- workflow 選択画面の番号と `--job` は別物。`--job` には基本的に `verify` / `verify-lite` のような job id を渡す
+- `~/dev/maakie-brainlab` なら `ci-self act --project-dir ~/dev/maakie-brainlab --list` のあと、`ci-self act --project-dir ~/dev/maakie-brainlab --job verify`
+- 実行時間は `elapsed_sec` に加えて `benchmark_started_at` / `benchmark_finished_at` も出し、artifact は `out/act-artifacts/` に出す
+- 実行中ログは左端に `[YYYY MM/DD HH:MM:SS]` を付けて流す
+- `SELF_HOSTED_OWNER` や `gh auth` が無くても回せる
+- workflow が1つも無い repo では、まず `.github/workflows/*.yml` を用意する必要がある
+- 既存 workflow が古い場合は `bash ops/ci/scaffold_verify_workflow.sh --repo <target> --apply --force` で act 互換の verify.yml に更新する
+- TTY から `scaffold_verify_workflow.sh --apply` を実行した場合は、`verify.yml` の新規作成/上書き前に `[y/N]` 確認が入る
+
+注意:
+
+- `act` は GitHub Actions の完全再現ではない。局所の概算時間測定と早い失敗検出には向くが、最終判定は `remote-ci` / 実機 self-hosted runner を優先する
+- 既存 workflow に `github.event.act == true` の逃がしが無い場合、owner guard で job が skip されることがある
+- `verify-full-dryrun` は手元の Docker/Colima 到達性が前提
+
 ## 主要コマンド
 
 - `ci-self up`: ローカル最短（register + run-focus）
+- `ci-self act`: `act` で verify workflow/job をローカル実行し、対象を絞って概算時間を測る
 - `ci-self focus`: run-focus 後、PR未作成なら自動作成し checks を監視
 - `ci-self remote-ci`: 鍵必須・同期・別端末での verify 実行・結果回収を1コマンドで実行
 - `ci-self doctor --fix`: 依存/gh auth/colima/docker/runner_health を診断し可能な範囲で修復

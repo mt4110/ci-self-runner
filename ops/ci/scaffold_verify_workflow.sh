@@ -27,6 +27,52 @@ APPLY=0
 FORCE=0
 UPDATE_GITIGNORE=1
 
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s\n' "$s"
+}
+
+is_interactive_tty() {
+  if [[ "${CI_SELF_TEST_FORCE_TTY:-0}" == "1" ]]; then
+    return 0
+  fi
+  [[ -t 0 && -t 1 ]]
+}
+
+confirm_apply() {
+  local prompt="$1"
+  local answer=""
+  local normalized=""
+
+  while true; do
+    printf '%s [y/N] ' "$prompt" >&2
+    if ! IFS= read -r answer; then
+      printf '\n' >&2
+      return 1
+    fi
+    normalized="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+    normalized="$(trim "$normalized")"
+    case "$normalized" in
+      y|yes) return 0 ;;
+      n|no|'') return 1 ;;
+      *) printf 'Please answer yes or no.\n' >&2 ;;
+    esac
+  done
+}
+
+update_gitignore_entries() {
+  [[ "$UPDATE_GITIGNORE" -eq 1 ]] || return 0
+  touch "$GITIGNORE_FILE"
+  for entry in ".local/" "out/" "cache/"; do
+    if ! grep -Fxq "$entry" "$GITIGNORE_FILE"; then
+      printf '%s\n' "$entry" >>"$GITIGNORE_FILE"
+      echo "OK: added to .gitignore: $entry"
+    fi
+  done
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -93,7 +139,7 @@ concurrency:
 
 jobs:
   verify:
-    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ github.event.act == true || (vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)) }}
     runs-on:
       - self-hosted
       - mac-mini
@@ -102,14 +148,39 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Go
+        if: ${{ !env.ACT }}
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Verify
+      - name: Setup Go For act
+        if: ${{ env.ACT }}
+        shell: bash
         run: |
-          go test ./...
-          go vet ./...
+          if command -v go >/dev/null 2>&1; then
+            go version
+          elif command -v mise >/dev/null 2>&1; then
+            mise x -- go version
+          else
+            echo "ERROR: go or mise is required for local act runs"
+            exit 1
+          fi
+
+      - name: Verify
+        shell: bash
+        run: |
+          run_go() {
+            if command -v go >/dev/null 2>&1; then
+              go "$@"
+            elif command -v mise >/dev/null 2>&1; then
+              mise x -- go "$@"
+            else
+              echo "ERROR: go or mise is required"
+              return 127
+            fi
+          }
+          run_go test ./...
+          run_go vet ./...
 YAML
 }
 
@@ -132,7 +203,7 @@ concurrency:
 
 jobs:
   verify:
-    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ github.event.act == true || (vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)) }}
     runs-on:
       - self-hosted
       - mac-mini
@@ -183,7 +254,7 @@ concurrency:
 
 jobs:
   verify:
-    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ github.event.act == true || (vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)) }}
     runs-on:
       - self-hosted
       - mac-mini
@@ -213,7 +284,19 @@ if [[ "$APPLY" -eq 0 ]]; then
 fi
 
 mkdir -p "$WORKFLOW_DIR"
-if [[ -f "$WORKFLOW_FILE" && "$FORCE" -ne 1 ]]; then
+if is_interactive_tty; then
+  if [[ -f "$WORKFLOW_FILE" ]]; then
+    if ! confirm_apply "verify.yml を上書きしますか？"; then
+      echo "SKIP: user declined workflow overwrite: $WORKFLOW_FILE"
+      exit 0
+    fi
+  else
+    if ! confirm_apply "verify.yml がありません。作成しますか？"; then
+      echo "SKIP: user declined workflow creation: $WORKFLOW_FILE"
+      exit 0
+    fi
+  fi
+elif [[ -f "$WORKFLOW_FILE" && "$FORCE" -ne 1 ]]; then
   echo "SKIP: $WORKFLOW_FILE already exists (use --force to overwrite)"
   if [[ "$MODE" == "nix" ]]; then
     if ! grep -Fq "nix-daemon.sh" "$WORKFLOW_FILE"; then
@@ -221,27 +304,11 @@ if [[ -f "$WORKFLOW_FILE" && "$FORCE" -ne 1 ]]; then
       echo "HINT: rerun with --force to refresh verify.yml template"
     fi
   fi
-  if [[ "$UPDATE_GITIGNORE" -eq 1 ]]; then
-    touch "$GITIGNORE_FILE"
-    for entry in ".local/" "out/" "cache/"; do
-      if ! grep -Fxq "$entry" "$GITIGNORE_FILE"; then
-        printf '%s\n' "$entry" >>"$GITIGNORE_FILE"
-        echo "OK: added to .gitignore: $entry"
-      fi
-    done
-  fi
+  update_gitignore_entries
   exit 0
 fi
 
 cp "$TMP_FILE" "$WORKFLOW_FILE"
 echo "OK: wrote $WORKFLOW_FILE (mode=$MODE)"
 
-if [[ "$UPDATE_GITIGNORE" -eq 1 ]]; then
-  touch "$GITIGNORE_FILE"
-  for entry in ".local/" "out/" "cache/"; do
-    if ! grep -Fxq "$entry" "$GITIGNORE_FILE"; then
-      printf '%s\n' "$entry" >>"$GITIGNORE_FILE"
-      echo "OK: added to .gitignore: $entry"
-    fi
-  done
-fi
+update_gitignore_entries

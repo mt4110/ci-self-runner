@@ -19,6 +19,35 @@ ci-self up
 1. `register`（runner登録・health・owner変数・workflow/template雛形）
 2. `run-focus`（verify実行/監視・PR checks監視・PRテンプレ同期）
 
+## 2.5) GitHub権限なしで対象jobだけ計測する
+
+```bash
+brew install act
+cd ~/dev/<target-repo>
+ci-self act
+ci-self act --list
+ci-self act --job <job-id>
+
+# どこからでも明示指定できる
+ci-self act --project-dir ~/dev/<target-repo> --job <job-id>
+```
+
+**この計測値はローカルでの概算です。実際の GitHub Actions / `remote-ci` / 実機 self-hosted runner の所要時間とは異なる場合があります。**
+
+- `ci-self act` は対象 repo の `.github/workflows/*.yml|*.yaml` を見る
+- `--workflow` を省略すると、repo の `.github/workflows/*.yml|*.yaml` から選ぶ。複数ある場合は対話選択、`q` で終了
+- まず `ci-self act --list` で job id を確認してから `--job <job-id>` を付ける
+- workflow 選択画面の番号と `--job` は別物。`--job` には `verify` のような job id を入れる
+- `~/dev/maakie-brainlab` なら `ci-self act --project-dir ~/dev/maakie-brainlab --list` のあと `ci-self act --project-dir ~/dev/maakie-brainlab --job verify`
+- `gh auth` や `SELF_HOSTED_OWNER` が無くても回せる
+- 実行時間は `elapsed_sec` に加えて `benchmark_started_at` / `benchmark_finished_at` を出し、artifact は `out/act-artifacts/` に出す
+- 実行中ログは左端に `[YYYY MM/DD HH:MM:SS]` を付ける
+- `verify-full-dryrun` は Docker/Colima が必要
+- workflow が1つも無い repo では、まず `.github/workflows/*.yml` を置く
+- 既存 workflow が古い場合は `bash ops/ci/scaffold_verify_workflow.sh --repo <target> --apply --force` で更新する
+- workflow に `github.event.act == true` が無い場合、owner guard で job が skip されることがある
+- TTY から `scaffold_verify_workflow.sh --apply` を叩くと、`verify.yml` の作成/上書き前に `[y/N]` を聞く
+
 ## 設定ファイルで毎回のオプションを省略
 
 ```bash
