@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   verify-lite:
-    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ github.event.act == true || (vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)) }}
     runs-on:
       - self-hosted
       - mac-mini
@@ -23,44 +23,72 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Setup Go
+        if: ${{ !env.ACT }}
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
 
+      - name: Setup Go For act
+        if: ${{ env.ACT }}
+        shell: bash
+        run: |
+          if command -v go >/dev/null 2>&1; then
+            go version
+          elif command -v mise >/dev/null 2>&1; then
+            mise x -- go version
+          else
+            echo "ERROR: go or mise is required for local act runs"
+            exit 1
+          fi
+
       - name: Verify Lite
-        run: go run ./cmd/verify-lite
+        shell: bash
+        run: |
+          run_go() {
+            if command -v go >/dev/null 2>&1; then
+              go "$@"
+            elif command -v mise >/dev/null 2>&1; then
+              mise x -- go "$@"
+            else
+              echo "ERROR: go or mise is required"
+              return 127
+            fi
+          }
+          run_go run ./cmd/verify-lite
 
       - name: Append Verify Lite Status To Job Summary
         if: always()
         run: |
+          if [[ -z "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            echo "SKIP: step_summary reason=missing_env"
+            exit 0
+          fi
           echo "## verify-lite.status" >> "$GITHUB_STEP_SUMMARY"
           cat out/verify-lite.status >> "$GITHUB_STEP_SUMMARY" || echo "(missing: out/verify-lite.status)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Evaluate Verify Lite Status
         if: always()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
-        with:
-          script: |
-            const fs = require('fs');
-            const path = 'out/verify-lite.status';
-            if (!fs.existsSync(path)) {
-              core.setFailed('verify-lite.status missing');
-            } else {
-              const content = fs.readFileSync(path, 'utf8');
-              if (content.includes('ERROR:') || content.includes('status=ERROR')) {
-                core.setFailed('verify-lite reported ERROR');
-              }
-            }
+        shell: bash
+        run: |
+          path='out/verify-lite.status'
+          if [[ ! -f "$path" ]]; then
+            echo "verify-lite.status missing"
+            exit 1
+          fi
+          if grep -Eq 'ERROR:|status=ERROR' "$path"; then
+            echo "verify-lite reported ERROR"
+            exit 1
+          fi
 
       - name: Notify Discord (CI Alerts)
-        if: always()
+        if: ${{ always() && !env.ACT }}
         continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: go run ./cmd/notify_discord --status out/verify-lite.status --title "verify-lite" --webhook-env DISCORD_WEBHOOK_URL --min-level ERROR
 
   verify-full-dryrun:
-    if: ${{ vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ github.event.act == true || (vars.SELF_HOSTED_OWNER != '' && github.repository_owner == vars.SELF_HOSTED_OWNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)) }}
     needs: verify-lite
     runs-on:
       - self-hosted
@@ -82,11 +110,15 @@ jobs:
       - name: Append Verify Full Status To Job Summary
         if: always()
         run: |
+          if [[ -z "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            echo "SKIP: step_summary reason=missing_env"
+            exit 0
+          fi
           echo "## verify-full.status" >> "$GITHUB_STEP_SUMMARY"
           cat out/verify-full.status >> "$GITHUB_STEP_SUMMARY" || echo "(missing: out/verify-full.status)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Verify Full Artifacts
-        if: always()
+        if: ${{ always() && !env.ACT }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: verify-full-dryrun-${{ github.run_id }}
@@ -98,22 +130,20 @@ jobs:
 
       - name: Evaluate Verify Full Status
         if: always()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
-        with:
-          script: |
-            const fs = require('fs');
-            const path = 'out/verify-full.status';
-            if (!fs.existsSync(path)) {
-              core.setFailed('verify-full.status missing');
-            } else {
-              const content = fs.readFileSync(path, 'utf8');
-              if (content.includes('ERROR:') || content.includes('status=ERROR')) {
-                core.setFailed('verify-full reported ERROR');
-              }
-            }
+        shell: bash
+        run: |
+          path='out/verify-full.status'
+          if [[ ! -f "$path" ]]; then
+            echo "verify-full.status missing"
+            exit 1
+          fi
+          if grep -Eq 'ERROR:|status=ERROR' "$path"; then
+            echo "verify-full reported ERROR"
+            exit 1
+          fi
 
       - name: Notify Discord (CI Alerts)
-        if: always()
+        if: ${{ always() && !env.ACT }}
         continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

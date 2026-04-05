@@ -38,6 +38,11 @@ trim() {
   printf '%s\n' "$s"
 }
 
+parse_decimal_index() {
+  local raw="$1"
+  printf '%s\n' "$((10#$raw))"
+}
+
 expand_local_path() {
   local p="$1"
   if [[ "$p" == "~/"* ]]; then
@@ -45,6 +50,35 @@ expand_local_path() {
   else
     printf '%s\n' "$p"
   fi
+}
+
+timestamp_now() {
+  date '+%Y %m/%d %H:%M:%S'
+}
+
+log_ts() {
+  local ts=""
+  ts="$(timestamp_now)"
+  printf '[%s] %s\n' "$ts" "$*"
+}
+
+log_ts_err() {
+  local ts=""
+  ts="$(timestamp_now)"
+  printf '[%s] %s\n' "$ts" "$*" >&2
+}
+
+prefix_stream_with_timestamp() {
+  local line=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '[%s] %s\n' "$(timestamp_now)" "$line"
+  done
+}
+
+cleanup_temp_file() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || return 0
+  rm -f "$path"
 }
 
 preferred_rsync_bin() {
@@ -157,6 +191,7 @@ Usage:
 
 Commands:
   up         One-command local register + run-focus
+  act        Run selected workflow/job locally via act for rough timing
   focus      run-focus + optional PR auto-create
   doctor     Dependency/runner checks (with optional --fix)
   config-init  Create .ci-self.env template in current project
@@ -173,6 +208,7 @@ Commands:
 Examples:
   cd ~/dev/maakie-brainlab
   ci-self up
+  ci-self act --job verify-lite
   ci-self focus
   ci-self doctor --fix
   ci-self config-init
@@ -212,6 +248,274 @@ resolve_ref() {
 
 current_branch() {
   git branch --show-current
+}
+
+resolve_act_workflow_path() {
+  local project_dir="$1"
+  local workflow="${2:-.github/workflows/verify.yml}"
+  if [[ "$workflow" == /* ]]; then
+    printf '%s\n' "$workflow"
+    return 0
+  fi
+  printf '%s\n' "$project_dir/$workflow"
+}
+
+find_local_workflows() {
+  local project_dir="$1"
+  local workflow_dir="$project_dir/.github/workflows"
+  local workflow=""
+  local matches=()
+  [[ -d "$workflow_dir" ]] || return 0
+
+  shopt -s nullglob
+  for workflow in "$workflow_dir"/*.yml "$workflow_dir"/*.yaml; do
+    [[ -f "$workflow" ]] && matches+=("$workflow")
+  done
+  shopt -u nullglob
+
+  [[ "${#matches[@]}" -gt 0 ]] || return 0
+  printf '%s\n' "${matches[@]}" | LC_ALL=C sort
+}
+
+workflow_display_name() {
+  local workflow="$1"
+  local line=""
+  local name=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      name:*)
+        name="$(trim "${line#name:}")"
+        name="$(unquote_value "$name")"
+        break
+        ;;
+    esac
+  done < "$workflow"
+  if [[ -z "$name" ]]; then
+    name="$(basename "$workflow")"
+  fi
+  printf '%s\n' "$name"
+}
+
+workflow_menu_label() {
+  local project_dir="$1"
+  local workflow="$2"
+  local name=""
+  local relative="$workflow"
+  name="$(workflow_display_name "$workflow")"
+  if [[ "$workflow" == "$project_dir/"* ]]; then
+    relative="${workflow#"$project_dir/"}"
+  fi
+  printf '%s (%s)\n' "$name" "$relative"
+}
+
+list_act_jobs() {
+  local project_dir="$1"
+  local workflow="$2"
+  local event_name="${3:-workflow_dispatch}"
+  local line=""
+  local rows_started=0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == Stage[[:space:]]*Job\ ID[[:space:]]* ]]; then
+      rows_started=1
+      continue
+    fi
+    [[ "$rows_started" -eq 1 ]] || continue
+    case "$line" in
+      [0-9]*)
+        set -- $line
+        [[ $# -ge 2 ]] && printf '%s\n' "$2"
+        ;;
+      *)
+        ;;
+    esac
+  done < <(act -C "$project_dir" -W "$workflow" -l "$event_name" 2>/dev/null || true)
+}
+
+print_act_jobs_hint() {
+  local project_dir="$1"
+  local workflow="$2"
+  local event_name="$3"
+  local workflow_label=""
+  local job=""
+  local jobs=()
+
+  while IFS= read -r job || [[ -n "$job" ]]; do
+    [[ -n "$job" ]] && jobs+=("$job")
+  done < <(list_act_jobs "$project_dir" "$workflow" "$event_name")
+
+  if [[ "$workflow" == "$project_dir/"* ]]; then
+    workflow_label="${workflow#"$project_dir/"}"
+  else
+    workflow_label="$workflow"
+  fi
+
+  if [[ "${#jobs[@]}" -eq 0 ]]; then
+    log_ts_err "HINT: no jobs were discovered from workflow=$workflow_label"
+    log_ts_err "HINT: run 'ci-self act --workflow $workflow_label --list' to inspect this workflow"
+    return 0
+  fi
+
+  log_ts_err "HINT: available jobs in $workflow_label:"
+  for job in "${jobs[@]}"; do
+    log_ts_err "HINT:   - $job"
+  done
+}
+
+resolve_requested_job() {
+  local project_dir="$1"
+  local workflow="$2"
+  local event_name="$3"
+  local requested_job="${4:-}"
+  local job=""
+  local jobs=()
+
+  while IFS= read -r job || [[ -n "$job" ]]; do
+    [[ -n "$job" ]] && jobs+=("$job")
+  done < <(list_act_jobs "$project_dir" "$workflow" "$event_name")
+
+  if [[ -z "$requested_job" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  if [[ "${#jobs[@]}" -eq 0 ]]; then
+    log_ts_err "WARN: could not discover jobs before act run; passing through requested job=$requested_job"
+    printf '%s\n' "$requested_job"
+    return 0
+  fi
+
+  if [[ "$requested_job" =~ ^[0-9]+$ ]]; then
+    local requested_job_index=0
+    requested_job_index="$(parse_decimal_index "$requested_job")"
+    if (( requested_job_index >= 1 && requested_job_index <= ${#jobs[@]} )); then
+      job="${jobs[$((requested_job_index - 1))]}"
+      log_ts_err "OK: selected job=$job (index=$requested_job_index)"
+      printf '%s\n' "$job"
+      return 0
+    fi
+    log_ts_err "ERROR: job index out of range: $requested_job_index"
+    log_ts_err "HINT: choose 1..${#jobs[@]} or pass an actual job id"
+    print_act_jobs_hint "$project_dir" "$workflow" "$event_name"
+    return 2
+  fi
+
+  for job in "${jobs[@]}"; do
+    if [[ "$job" == "$requested_job" ]]; then
+      printf '%s\n' "$requested_job"
+      return 0
+    fi
+  done
+
+  log_ts_err "ERROR: job not found in workflow: $requested_job"
+  print_act_jobs_hint "$project_dir" "$workflow" "$event_name"
+  return 2
+}
+
+select_local_workflow() {
+  local project_dir="$1"
+  local workflow_dir="$project_dir/.github/workflows"
+  local workflow=""
+  local workflows=()
+  local choice=""
+  local selected=""
+  local idx=1
+
+  while IFS= read -r workflow || [[ -n "$workflow" ]]; do
+    [[ -n "$workflow" ]] && workflows+=("$workflow")
+  done < <(find_local_workflows "$project_dir")
+
+  if [[ "${#workflows[@]}" -eq 0 ]]; then
+    log_ts_err "ERROR: no workflow files found under: $workflow_dir"
+    log_ts_err "HINT: pass --workflow <path> or add a workflow first"
+    return 2
+  fi
+
+  if [[ "${#workflows[@]}" -eq 1 ]]; then
+    printf '%s\n' "${workflows[0]}"
+    return 0
+  fi
+
+  while true; do
+    printf '> どのworkflowを、actで実行したいですか？\n' >&2
+    idx=1
+    for workflow in "${workflows[@]}"; do
+      printf '> [%d] %s\n' "$idx" "$(workflow_menu_label "$project_dir" "$workflow")" >&2
+      idx=$((idx + 1))
+    done
+    printf '> [q] quit\n' >&2
+    printf '> ' >&2
+    if ! IFS= read -r choice; then
+      printf '\n' >&2
+      log_ts_err "SKIP: act selection cancelled"
+      return 130
+    fi
+
+    choice="$(trim "$choice")"
+    case "$choice" in
+      q|Q)
+        log_ts_err "SKIP: act selection cancelled"
+        return 130
+        ;;
+      '' )
+        printf '> 入力が空です。番号か q を入力してください。\n' >&2
+        ;;
+      *[!0-9]*)
+        printf '> 不正な入力です。番号か q を入力してください。\n' >&2
+        ;;
+      *)
+        local choice_index=0
+        choice_index="$(parse_decimal_index "$choice")"
+        if (( choice_index >= 1 && choice_index <= ${#workflows[@]} )); then
+          selected="${workflows[$((choice_index - 1))]}"
+          log_ts_err "OK: selected workflow=$selected"
+          printf '%s\n' "$selected"
+          return 0
+        fi
+        printf '> 範囲外です。1 から %d まで、または q を入力してください。\n' "${#workflows[@]}" >&2
+        ;;
+    esac
+  done
+}
+
+write_act_event_payload() {
+  local event_name="${1:-workflow_dispatch}"
+  case "$event_name" in
+    pull_request)
+      cat <<'JSON'
+{
+  "act": true,
+  "pull_request": {
+    "head": {
+      "ref": "act-head",
+      "repo": {
+        "fork": false
+      }
+    },
+    "base": {
+      "ref": "main"
+    }
+  }
+}
+JSON
+      ;;
+    workflow_dispatch)
+      cat <<'JSON'
+{
+  "act": true,
+  "inputs": {}
+}
+JSON
+      ;;
+    *)
+      cat <<'JSON'
+{
+  "act": true
+}
+JSON
+      ;;
+  esac
 }
 
 ensure_verify_workflow_nix_compat() {
@@ -666,6 +970,133 @@ USAGE
   local run_focus_args=(--ref "$ref" --project-dir "$repo_dir")
   [[ -n "$repo" ]] && run_focus_args+=(--repo "$repo")
   cmd_run_watch --all-green --sync-pr-template "${run_focus_args[@]}"
+}
+
+cmd_act() {
+  local project_dir="$PWD"
+  local workflow=""
+  local job=""
+  local event_name="workflow_dispatch"
+  local list_only=0
+  local started_at=""
+  local finished_at=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-dir) project_dir="${2:-}"; shift 2 ;;
+      --workflow) workflow="${2:-}"; shift 2 ;;
+      --job) job="${2:-}"; shift 2 ;;
+      --event) event_name="${2:-}"; shift 2 ;;
+      --list) list_only=1; shift ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self act [--project-dir path] [--workflow path] [--job job-id] [--event push|pull_request|workflow_dispatch] [--list]
+
+Examples:
+  ci-self act
+  ci-self act --list
+  ci-self act --job verify-lite
+  ci-self act --project-dir ~/dev/maakie-brainlab --list
+  ci-self act --project-dir ~/dev/maakie-brainlab --job verify
+USAGE
+        return 0
+        ;;
+      *)
+        log_ts_err "ERROR: unknown option for act: $1"
+        return 2
+        ;;
+    esac
+  done
+
+  [[ -z "$project_dir" ]] && project_dir="$PWD"
+  [[ -n "$CONFIG_PROJECT_DIR" && "$project_dir" == "$PWD" ]] && project_dir="$CONFIG_PROJECT_DIR"
+  project_dir="$(expand_local_path "$project_dir")"
+
+  [[ -d "$project_dir" ]] || { log_ts_err "ERROR: --project-dir not found: $project_dir"; return 2; }
+
+  if [[ -n "$workflow" ]]; then
+    workflow="$(resolve_act_workflow_path "$project_dir" "$workflow")"
+    [[ -f "$workflow" ]] || { log_ts_err "ERROR: workflow not found: $workflow"; return 2; }
+  else
+    workflow="$(select_local_workflow "$project_dir")" || return $?
+  fi
+
+  command -v act >/dev/null 2>&1 || {
+    log_ts_err "ERROR: act command not found"
+    log_ts_err "HINT: brew install act"
+    return 1
+  }
+
+  if ! grep -Fq "github.event.act == true" "$workflow"; then
+    log_ts_err "WARN: workflow may not be act-compatible: $workflow"
+    log_ts_err "HINT: bash \"$ROOT_DIR/ops/ci/scaffold_verify_workflow.sh\" --repo \"$project_dir\" --apply --force"
+  fi
+
+  if [[ -n "$job" && "$list_only" -eq 0 ]]; then
+    job="$(resolve_requested_job "$project_dir" "$workflow" "$event_name" "$job")" || return $?
+  fi
+
+  local act_cmd=(act -C "$project_dir")
+  if [[ "$list_only" -eq 1 ]]; then
+    act_cmd+=(-W "$workflow" -l "$event_name")
+    log_ts "OK: act list project_dir=$project_dir workflow=$workflow event=$event_name"
+    local list_status=0
+    if "${act_cmd[@]}" 2>&1 | prefix_stream_with_timestamp; then
+      return 0
+    fi
+    list_status="${PIPESTATUS[0]}"
+    log_ts_err "ERROR: act list failed exit_code=$list_status project_dir=$project_dir"
+    return "$list_status"
+  fi
+
+  local event_file=""
+  event_file="$(mktemp "${TMPDIR:-/tmp}/ci-self-act-event.XXXXXX")"
+  write_act_event_payload "$event_name" > "$event_file"
+
+  local artifact_dir="$project_dir/out/act-artifacts"
+  mkdir -p "$artifact_dir"
+  local act_offline_mode="${CI_SELF_ACT_OFFLINE_MODE:-0}"
+
+  act_cmd+=(
+    "$event_name"
+    -W "$workflow"
+    -e "$event_file"
+    --artifact-server-path "$artifact_dir"
+    --no-skip-checkout
+    --pull=false
+    -P "self-hosted=-self-hosted"
+    -P "self-hosted,mac-mini=-self-hosted"
+    -P "self-hosted,mac-mini,colima,verify-full=-self-hosted"
+  )
+  if [[ "$act_offline_mode" == "1" ]]; then
+    act_cmd+=(--action-offline-mode)
+    log_ts "OK: act offline mode enabled via CI_SELF_ACT_OFFLINE_MODE=1; required action repositories must already be cached locally"
+  fi
+  [[ -n "$job" ]] && act_cmd+=(-j "$job")
+
+  started_at="$(timestamp_now)"
+  log_ts "OK: act run project_dir=$project_dir workflow=$workflow event=$event_name${job:+ job=$job} artifact_dir=$artifact_dir benchmark_started_at=$started_at"
+  local elapsed_sec=0
+  local status=0
+  SECONDS=0
+  if (
+    trap 'cleanup_temp_file "$event_file"' EXIT
+    trap 'cleanup_temp_file "$event_file"; exit 130' INT TERM
+    "${act_cmd[@]}" 2>&1 | prefix_stream_with_timestamp
+  ); then
+    status=0
+  else
+    status="$?"
+  fi
+  elapsed_sec="$SECONDS"
+  finished_at="$(timestamp_now)"
+  cleanup_temp_file "$event_file"
+
+  if [[ "$status" -ne 0 ]]; then
+    log_ts_err "ERROR: act failed exit_code=$status elapsed_sec=$elapsed_sec benchmark_started_at=$started_at benchmark_finished_at=$finished_at project_dir=$project_dir"
+    return "$status"
+  fi
+  log_ts "OK: act completed elapsed_sec=$elapsed_sec benchmark_started_at=$started_at benchmark_finished_at=$finished_at artifact_dir=$artifact_dir project_dir=$project_dir"
 }
 
 cmd_focus() {
@@ -1694,6 +2125,7 @@ main() {
   shift || true
   case "$cmd" in
     up) cmd_up "$@" ;;
+    act) cmd_act "$@" ;;
     focus) cmd_focus "$@" ;;
     doctor) cmd_doctor "$@" ;;
     config-init) cmd_config_init "$@" ;;

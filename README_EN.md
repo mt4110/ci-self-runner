@@ -18,6 +18,8 @@ cd ~/dev/<target-repo>
 ci-self up
 ```
 
+If you want to use `ci-self act` for rough local timing, install it first with `brew install act`.
+
 `ci-self up` runs `register + run-focus` in sequence.
 
 ## Use A Remote CI Runner In One Command
@@ -145,9 +147,47 @@ CI_SELF_REMOTE_IDENTITY=/Users/<you>/.ssh/id_ed25519_for_ci_runner
 CI_SELF_PR_BASE=main
 ```
 
+## Run Targeted Verify Jobs Locally With act
+
+If you want to run only selected jobs locally without `gh workflow run` and get rough local timing, use the `act` path.
+
+```bash
+brew install act
+cd ~/dev/<target-repo>
+ci-self act
+ci-self act --list
+ci-self act --job <job-id>
+
+# Or point at the repo explicitly from anywhere
+ci-self act --project-dir ~/dev/<target-repo> --job <job-id>
+```
+
+**These timings are local estimates only. Actual duration on GitHub Actions, `remote-ci`, or a real self-hosted runner may differ.**
+
+Notes:
+
+- `ci-self act` looks at `.github/workflows/*.yml|*.yaml` inside the target repo
+- If you omit `--workflow` and the repo has multiple workflows, it opens a shell prompt asking which workflow to run; press `q` to quit
+- Start with `ci-self act --list`, then run `--job <job-id>`
+- The workflow menu number is separate from `--job`; pass a real job id such as `verify` or `verify-lite`
+- For `~/dev/maakie-brainlab`, use `ci-self act --project-dir ~/dev/maakie-brainlab --list` and then `ci-self act --project-dir ~/dev/maakie-brainlab --job verify`
+- It prints `elapsed_sec` plus `benchmark_started_at` / `benchmark_finished_at`, and stores artifacts under `out/act-artifacts/`
+- Live log lines are prefixed with `[YYYY MM/DD HH:MM:SS]`
+- It does not require `SELF_HOSTED_OWNER` or `gh auth`
+- If the repo has no workflow files yet, add `.github/workflows/*.yml` first
+- If your existing workflow is old, refresh it with `bash ops/ci/scaffold_verify_workflow.sh --repo <target> --apply --force`
+- When `scaffold_verify_workflow.sh --apply` runs from a TTY, it asks for `[y/N]` confirmation before creating or overwriting `verify.yml`
+
+Keep in mind:
+
+- `act` is useful for rough local timing and early failure detection, but it is not a full GitHub Actions replica
+- If your workflow does not include a `github.event.act == true` bypass, owner guards may skip the job locally
+- `verify-full-dryrun` still depends on local Docker/Colima reachability
+
 ## Main Commands
 
 - `ci-self up`: fastest local path (`register + run-focus`)
+- `ci-self act`: run a selected verify workflow/job locally via `act` for rough timing
 - `ci-self focus`: runs `run-focus`, creates a PR if missing, then watches checks
 - `ci-self remote-ci`: SSH-required sync + remote verify + result collection in one command
 - `ci-self doctor --fix`: checks dependencies, `gh auth`, Colima, Docker, and runner health

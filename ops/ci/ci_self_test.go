@@ -5,11 +5,46 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
+func mergeEnvOverrides(base []string, overrides []string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+
+	overrideKeys := make(map[string]struct{}, len(overrides))
+	for _, entry := range overrides {
+		key := entry
+		if idx := strings.IndexByte(entry, '='); idx >= 0 {
+			key = entry[:idx]
+		}
+		overrideKeys[key] = struct{}{}
+	}
+
+	merged := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key := entry
+		if idx := strings.IndexByte(entry, '='); idx >= 0 {
+			key = entry[:idx]
+		}
+		if _, exists := overrideKeys[key]; exists {
+			continue
+		}
+		merged = append(merged, entry)
+	}
+	merged = append(merged, overrides...)
+	return merged
+}
+
 func runCiSelfInDirEnv(t *testing.T, dir string, env []string, args ...string) (string, error) {
+	t.Helper()
+	return runCiSelfInDirEnvInput(t, dir, env, "", args...)
+}
+
+func runCiSelfInDirEnvInput(t *testing.T, dir string, env []string, input string, args ...string) (string, error) {
 	t.Helper()
 	scriptPath, err := filepath.Abs("./ci_self.sh")
 	if err != nil {
@@ -22,7 +57,10 @@ func runCiSelfInDirEnv(t *testing.T, dir string, env []string, args ...string) (
 		cmd.Dir = dir
 	}
 	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = mergeEnvOverrides(os.Environ(), env)
+	}
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
 	}
 	out, runErr := cmd.CombinedOutput()
 	return string(out), runErr
@@ -46,7 +84,7 @@ func TestHelpListsRemoteCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help failed: %v\noutput:\n%s", err, out)
 	}
-	for _, want := range []string{"up", "focus", "doctor", "config-init", "remote-ci", "remote-register", "remote-run-focus", "remote-up"} {
+	for _, want := range []string{"up", "act", "focus", "doctor", "config-init", "remote-ci", "remote-register", "remote-run-focus", "remote-up"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q\noutput:\n%s", want, out)
 		}
@@ -129,6 +167,517 @@ func TestUpHelp(t *testing.T) {
 	}
 	if !strings.Contains(out, "Usage: ci-self up") {
 		t.Fatalf("up help output missing usage\noutput:\n%s", out)
+	}
+}
+
+func TestActHelp(t *testing.T) {
+	out, err := runCiSelf(t, "act", "--help")
+	if err != nil {
+		t.Fatalf("act --help failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Usage: ci-self act") {
+		t.Fatalf("act help output missing usage\noutput:\n%s", out)
+	}
+}
+
+func TestActRequiresBinary(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":/usr/bin:/bin:/usr/sbin:/sbin"},
+		"act",
+		"--project-dir",
+		tmp,
+	)
+	if err == nil {
+		t.Fatalf("expected act command to fail when binary is missing\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "ERROR: act command not found") {
+		t.Fatalf("expected missing act error\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "brew install act") {
+		t.Fatalf("expected install hint\noutput:\n%s", out)
+	}
+}
+
+func TestActErrorsWhenNoWorkflowExists(t *testing.T) {
+	tmp := t.TempDir()
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"},
+		"act",
+		"--project-dir",
+		tmp,
+	)
+	if err == nil {
+		t.Fatalf("expected act command to fail when workflow is missing\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "ERROR: no workflow files found under: "+filepath.Join(tmp, ".github", "workflows")) {
+		t.Fatalf("expected missing workflow directory error\noutput:\n%s", out)
+	}
+}
+
+func TestActInteractiveWorkflowSelection(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "alpha.yml"), []byte("name: Alpha Flow\n"), 0o644); err != nil {
+		t.Fatalf("write alpha workflow failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "beta.yaml"), []byte("name: Beta Flow\n"), 0o644); err != nil {
+		t.Fatalf("write beta workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> %q
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID  Job name  Workflow name  Workflow file  Events
+0      verify  verify    Beta Flow      beta.yaml      workflow_dispatch
+EOF
+  exit 0
+fi
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnvInput(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"2\n",
+		"act",
+		"--project-dir",
+		tmp,
+		"--list",
+	)
+	if err != nil {
+		t.Fatalf("interactive act list failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "> どのworkflowを、actで実行したいですか？") {
+		t.Fatalf("expected workflow selection prompt\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "OK: selected workflow="+filepath.Join(tmp, ".github", "workflows", "beta.yaml")) {
+		t.Fatalf("expected selected workflow output\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "-W "+filepath.Join(tmp, ".github", "workflows", "beta.yaml")) {
+		t.Fatalf("expected selected workflow path in act invocation\nlog:\n%s", string(logBody))
+	}
+}
+
+func TestActInteractiveWorkflowSelectionAcceptsLeadingZeroIndex(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "alpha.yml"), []byte("name: Alpha Flow\n"), 0o644); err != nil {
+		t.Fatalf("write alpha workflow failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "beta.yaml"), []byte("name: Beta Flow\n"), 0o644); err != nil {
+		t.Fatalf("write beta workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> %q
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID  Job name  Workflow name  Workflow file  Events
+0      verify  verify    Beta Flow      beta.yaml      workflow_dispatch
+EOF
+  exit 0
+fi
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnvInput(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"02\n",
+		"act",
+		"--project-dir",
+		tmp,
+		"--list",
+	)
+	if err != nil {
+		t.Fatalf("interactive act list with leading zero failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: selected workflow="+filepath.Join(tmp, ".github", "workflows", "beta.yaml")) {
+		t.Fatalf("expected selected workflow output\noutput:\n%s", out)
+	}
+}
+
+func TestActInteractiveWorkflowSelectionQuit(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "alpha.yml"), []byte("name: Alpha Flow\n"), 0o644); err != nil {
+		t.Fatalf("write alpha workflow failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "beta.yaml"), []byte("name: Beta Flow\n"), 0o644); err != nil {
+		t.Fatalf("write beta workflow failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnvInput(
+		t,
+		tmp,
+		[]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"},
+		"q\n",
+		"act",
+		"--project-dir",
+		tmp,
+	)
+	if err == nil {
+		t.Fatalf("expected quit selection to stop the command\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "SKIP: act selection cancelled") {
+		t.Fatalf("expected selection cancel output\noutput:\n%s", out)
+	}
+}
+
+func TestActBuildsTargetedInvocation(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+1      verify-full  verify-full    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "$*" >> %q
+echo "[verify/verify-lite] sample stdout"
+echo "[verify/verify-lite] sample stderr" >&2
+event_file=""
+prev=""
+for arg in "$@"; do
+  if [[ "$prev" == "-e" ]]; then
+    event_file="$arg"
+    break
+  fi
+  prev="$arg"
+done
+if [[ -n "$event_file" && -f "$event_file" ]]; then
+  echo "--- event ---" >> %q
+  cat "$event_file" >> %q
+fi
+`, logPath, logPath, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"verify-lite",
+	)
+	if err != nil {
+		t.Fatalf("act command failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: act completed") {
+		t.Fatalf("expected act completion output\noutput:\n%s", out)
+	}
+	if !regexp.MustCompile(`(?m)^\[[0-9]{4} [0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] OK: act run project_dir=`).MatchString(out) {
+		t.Fatalf("expected timestamped act start output\noutput:\n%s", out)
+	}
+	if !regexp.MustCompile(`(?m)^\[[0-9]{4} [0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] \[verify/verify-lite\] sample stdout$`).MatchString(out) {
+		t.Fatalf("expected timestamped stdout passthrough\noutput:\n%s", out)
+	}
+	if !regexp.MustCompile(`(?m)^\[[0-9]{4} [0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] \[verify/verify-lite\] sample stderr$`).MatchString(out) {
+		t.Fatalf("expected timestamped stderr passthrough\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	logText := string(logBody)
+	if !strings.Contains(logText, "-C "+tmp) {
+		t.Fatalf("expected project dir argument\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "workflow_dispatch") {
+		t.Fatalf("expected workflow_dispatch event\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "-W "+filepath.Join(tmp, ".github", "workflows", "verify.yml")) {
+		t.Fatalf("expected workflow path argument\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "-j verify-lite") {
+		t.Fatalf("expected targeted job argument\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--no-skip-checkout") {
+		t.Fatalf("expected no-skip-checkout argument\nlog:\n%s", logText)
+	}
+	if strings.Contains(logText, "--action-offline-mode") {
+		t.Fatalf("expected offline mode to be opt-in\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "--artifact-server-path "+filepath.Join(tmp, "out", "act-artifacts")) {
+		t.Fatalf("expected artifact server path\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "-P self-hosted=-self-hosted") {
+		t.Fatalf("expected self-hosted platform mapping\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, `"act": true`) {
+		t.Fatalf("expected act event payload\nlog:\n%s", logText)
+	}
+}
+
+func TestActRejectsUnknownJobWithAvailableJobsHint(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	actPath := filepath.Join(tmp, "act")
+	actScript := `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+1      verify-full  verify-full    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "unexpected act execution" >&2
+exit 99
+`
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"missing-job",
+	)
+	if err == nil {
+		t.Fatalf("expected invalid job to fail\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "ERROR: job not found in workflow: missing-job") {
+		t.Fatalf("expected missing job error\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "HINT:   - verify-lite") || !strings.Contains(out, "HINT:   - verify-full") {
+		t.Fatalf("expected available jobs hint\noutput:\n%s", out)
+	}
+}
+
+func TestActResolvesNumericJobIndex(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+1      verify-full  verify-full    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "$*" >> %q
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"2",
+	)
+	if err != nil {
+		t.Fatalf("numeric job selection failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: selected job=verify-full (index=2)") {
+		t.Fatalf("expected numeric selection log\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "-j verify-full") {
+		t.Fatalf("expected resolved job id in act invocation\nlog:\n%s", string(logBody))
+	}
+}
+
+func TestActResolvesLeadingZeroJobIndex(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+1      verify-full  verify-full    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "$*" >> %q
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"02",
+	)
+	if err != nil {
+		t.Fatalf("leading-zero job selection failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: selected job=verify-full (index=2)") {
+		t.Fatalf("expected normalized numeric selection log\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "-j verify-full") {
+		t.Fatalf("expected resolved job id in act invocation\nlog:\n%s", string(logBody))
+	}
+}
+
+func TestActOfflineModeOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "$*" >> %q
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{
+			"PATH=" + tmp + ":" + os.Getenv("PATH"),
+			"CI_SELF_ACT_OFFLINE_MODE=1",
+		},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"verify-lite",
+	)
+	if err != nil {
+		t.Fatalf("act command failed with offline mode: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: act offline mode enabled via CI_SELF_ACT_OFFLINE_MODE=1") {
+		t.Fatalf("expected offline mode log\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "--action-offline-mode") {
+		t.Fatalf("expected offline mode argument\nlog:\n%s", string(logBody))
 	}
 }
 
