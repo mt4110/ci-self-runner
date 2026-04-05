@@ -10,6 +10,35 @@ import (
 	"testing"
 )
 
+func mergeEnvOverrides(base []string, overrides []string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+
+	overrideKeys := make(map[string]struct{}, len(overrides))
+	for _, entry := range overrides {
+		key := entry
+		if idx := strings.IndexByte(entry, '='); idx >= 0 {
+			key = entry[:idx]
+		}
+		overrideKeys[key] = struct{}{}
+	}
+
+	merged := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key := entry
+		if idx := strings.IndexByte(entry, '='); idx >= 0 {
+			key = entry[:idx]
+		}
+		if _, exists := overrideKeys[key]; exists {
+			continue
+		}
+		merged = append(merged, entry)
+	}
+	merged = append(merged, overrides...)
+	return merged
+}
+
 func runCiSelfInDirEnv(t *testing.T, dir string, env []string, args ...string) (string, error) {
 	t.Helper()
 	return runCiSelfInDirEnvInput(t, dir, env, "", args...)
@@ -28,7 +57,7 @@ func runCiSelfInDirEnvInput(t *testing.T, dir string, env []string, input string
 		cmd.Dir = dir
 	}
 	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = mergeEnvOverrides(os.Environ(), env)
 	}
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
@@ -374,6 +403,12 @@ fi
 	if !strings.Contains(logText, "-j verify-lite") {
 		t.Fatalf("expected targeted job argument\nlog:\n%s", logText)
 	}
+	if !strings.Contains(logText, "--no-skip-checkout") {
+		t.Fatalf("expected no-skip-checkout argument\nlog:\n%s", logText)
+	}
+	if strings.Contains(logText, "--action-offline-mode") {
+		t.Fatalf("expected offline mode to be opt-in\nlog:\n%s", logText)
+	}
 	if !strings.Contains(logText, "--artifact-server-path "+filepath.Join(tmp, "out", "act-artifacts")) {
 		t.Fatalf("expected artifact server path\nlog:\n%s", logText)
 	}
@@ -485,6 +520,62 @@ echo "$*" >> %q
 	}
 	if !strings.Contains(string(logBody), "-j verify-full") {
 		t.Fatalf("expected resolved job id in act invocation\nlog:\n%s", string(logBody))
+	}
+}
+
+func TestActOfflineModeOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	workflowDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte("name: verify\n"), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	logPath := filepath.Join(tmp, "act.log")
+	actPath := filepath.Join(tmp, "act")
+	actScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" -l "* ]]; then
+  cat <<'EOF'
+Stage  Job ID       Job name       Workflow name  Workflow file  Events
+0      verify-lite  verify-lite    verify         verify.yml     workflow_dispatch
+EOF
+  exit 0
+fi
+echo "$*" >> %q
+`, logPath)
+	if err := os.WriteFile(actPath, []byte(actScript), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{
+			"PATH=" + tmp + ":" + os.Getenv("PATH"),
+			"CI_SELF_ACT_OFFLINE_MODE=1",
+		},
+		"act",
+		"--project-dir",
+		tmp,
+		"--job",
+		"verify-lite",
+	)
+	if err != nil {
+		t.Fatalf("act command failed with offline mode: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: act offline mode enabled via CI_SELF_ACT_OFFLINE_MODE=1") {
+		t.Fatalf("expected offline mode log\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read act log: %v", readErr)
+	}
+	if !strings.Contains(string(logBody), "--action-offline-mode") {
+		t.Fatalf("expected offline mode argument\nlog:\n%s", string(logBody))
 	}
 }
 

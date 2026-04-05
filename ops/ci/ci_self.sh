@@ -70,6 +70,12 @@ prefix_stream_with_timestamp() {
   done
 }
 
+cleanup_temp_file() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || return 0
+  rm -f "$path"
+}
+
 preferred_rsync_bin() {
   local current=""
   current="$(command -v rsync 2>/dev/null || true)"
@@ -1040,18 +1046,23 @@ USAGE
 
   local artifact_dir="$project_dir/out/act-artifacts"
   mkdir -p "$artifact_dir"
+  local act_offline_mode="${CI_SELF_ACT_OFFLINE_MODE:-0}"
 
   act_cmd+=(
     "$event_name"
     -W "$workflow"
     -e "$event_file"
     --artifact-server-path "$artifact_dir"
+    --no-skip-checkout
     --pull=false
-    --action-offline-mode
     -P "self-hosted=-self-hosted"
     -P "self-hosted,mac-mini=-self-hosted"
     -P "self-hosted,mac-mini,colima,verify-full=-self-hosted"
   )
+  if [[ "$act_offline_mode" == "1" ]]; then
+    act_cmd+=(--action-offline-mode)
+    log_ts "OK: act offline mode enabled via CI_SELF_ACT_OFFLINE_MODE=1; required action repositories must already be cached locally"
+  fi
   [[ -n "$job" ]] && act_cmd+=(-j "$job")
 
   started_at="$(timestamp_now)"
@@ -1059,14 +1070,18 @@ USAGE
   local elapsed_sec=0
   local status=0
   SECONDS=0
-  if "${act_cmd[@]}" 2>&1 | prefix_stream_with_timestamp; then
+  if (
+    trap 'cleanup_temp_file "$event_file"' EXIT
+    trap 'cleanup_temp_file "$event_file"; exit 130' INT TERM
+    "${act_cmd[@]}" 2>&1 | prefix_stream_with_timestamp
+  ); then
     status=0
   else
-    status="${PIPESTATUS[0]}"
+    status="$?"
   fi
   elapsed_sec="$SECONDS"
   finished_at="$(timestamp_now)"
-  rm -f "$event_file"
+  cleanup_temp_file "$event_file"
 
   if [[ "$status" -ne 0 ]]; then
     log_ts_err "ERROR: act failed exit_code=$status elapsed_sec=$elapsed_sec benchmark_started_at=$started_at benchmark_finished_at=$finished_at project_dir=$project_dir"

@@ -20,7 +20,7 @@ func runScaffoldVerifyWorkflowWithEnvInput(t *testing.T, repo string, env []stri
 	cmd := exec.Command("bash", allArgs...)
 	cmd.Dir = "."
 	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = mergeEnvOverrides(os.Environ(), env)
 	}
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
