@@ -16,6 +16,7 @@ GITHUB_REF_NAME="${GITHUB_REF_NAME:-}"
 HOST_UID="${HOST_UID:-$(id -u)}"
 HOST_GID="${HOST_GID:-$(id -g)}"
 STATUS_PATH="${OUT_DIR}/verify-full.status"
+DOCKER_READY_REASON="docker_daemon_unavailable"
 
 mkdir -p "${OUT_DIR}"
 rm -f "${STATUS_PATH}"
@@ -68,6 +69,7 @@ write_error_status() {
 ensure_docker_ready() {
   if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: docker command not found" >&2
+    DOCKER_READY_REASON="docker_command_missing"
     return 1
   fi
 
@@ -85,11 +87,12 @@ ensure_docker_ready() {
   fi
 
   echo "ERROR: docker daemon unavailable" >&2
+  DOCKER_READY_REASON="docker_daemon_unavailable"
   return 1
 }
 
 if ! ensure_docker_ready; then
-  write_error_status "docker_daemon_unavailable"
+  write_error_status "${DOCKER_READY_REASON}"
   exit 1
 fi
 

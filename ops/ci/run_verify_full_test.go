@@ -73,6 +73,38 @@ exit 99
 	}
 }
 
+func TestRunVerifyFullWritesSpecificStatusWhenDockerCommandMissing(t *testing.T) {
+	outDir := filepath.Join(t.TempDir(), "out")
+
+	out, err := runVerifyFullWithEnv(t, []string{
+		"PATH=/usr/bin:/bin",
+		"OUT_DIR=" + outDir,
+		"VERIFY_DRY_RUN=1",
+	})
+	if err == nil {
+		t.Fatalf("expected missing docker failure\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "docker command not found") {
+		t.Fatalf("expected missing docker message\noutput:\n%s", out)
+	}
+
+	statusPath := filepath.Join(outDir, "verify-full.status")
+	body, readErr := os.ReadFile(statusPath)
+	if readErr != nil {
+		t.Fatalf("expected status file after missing docker: %v\noutput:\n%s", readErr, out)
+	}
+	status := string(body)
+	for _, want := range []string{
+		"status=ERROR",
+		"source=run_verify_full",
+		"reason=docker_command_missing",
+	} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("status missing %q\nstatus:\n%s\noutput:\n%s", want, status, out)
+		}
+	}
+}
+
 func TestRunVerifyFullStartsColimaBeforeDockerRun(t *testing.T) {
 	binDir := t.TempDir()
 	stateDir := t.TempDir()

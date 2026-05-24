@@ -13,7 +13,9 @@ func TestIsMobileSensitivePath(t *testing.T) {
 		"ios/profile.mobileprovision",
 		"android/release.jks",
 		"android/key.properties",
+		"fastlane/.env",
 		"fastlane/.env.production",
+		"apps/mobile/fastlane/.env.production",
 		"AuthKey_ABC123.p8",
 		"authkey_abc123.p8",
 	} {
@@ -28,6 +30,8 @@ func TestIsMobileSensitivePathAllowsOrdinaryFiles(t *testing.T) {
 		"docs/ci/MOBILE_SECRETS_POLICY.md",
 		"android/README.md",
 		"fastlane/Fastfile",
+		"fastlane/.envrc",
+		"apps/mobile/fastlane/.envrc",
 		"ios/App.xcodeproj/project.pbxproj",
 	} {
 		if isMobileSensitivePath(path) {

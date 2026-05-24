@@ -197,7 +197,10 @@ func isMobileSensitivePath(path string) bool {
 	if lowerBase == "key.properties" && (strings.HasPrefix(lowerPath, "android/") || strings.Contains(lowerPath, "/android/")) {
 		return true
 	}
-	if strings.HasPrefix(lowerPath, "fastlane/.env") || strings.Contains(lowerPath, "/fastlane/.env") {
+	if lowerPath == "fastlane/.env" ||
+		strings.HasSuffix(lowerPath, "/fastlane/.env") ||
+		strings.HasPrefix(lowerPath, "fastlane/.env.") ||
+		strings.Contains(lowerPath, "/fastlane/.env.") {
 		return true
 	}
 	if lowerBase == ".env.mobile" {
