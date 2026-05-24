@@ -94,3 +94,27 @@ jobs:
 		t.Fatalf("expected pinned step uses to pass: %v", err)
 	}
 }
+
+func TestWorkflowPolicyScanAcceptsUppercasePinnedStepUses(t *testing.T) {
+	repo := t.TempDir()
+	workflowDir := filepath.Join(repo, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir failed: %v", err)
+	}
+	workflow := `name: verify
+on: workflow_dispatch
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34E114876B0B11C390A56381AD16EBD13914F8D5
+`
+	if err := os.WriteFile(filepath.Join(workflowDir, "verify.yml"), []byte(workflow), 0o644); err != nil {
+		t.Fatalf("write workflow failed: %v", err)
+	}
+
+	t.Chdir(repo)
+	if err := runWorkflowPolicyScan(); err != nil {
+		t.Fatalf("expected uppercase pinned step uses to pass: %v", err)
+	}
+}

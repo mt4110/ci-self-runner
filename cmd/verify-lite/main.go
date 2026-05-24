@@ -227,7 +227,7 @@ func runWorkflowPolicyScan() error {
 		return errors.New(".github/workflows is not a directory")
 	}
 
-	usesRefPattern := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	usesRefPattern := regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 	var violations []string
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
