@@ -27,18 +27,26 @@ const (
 // SHA256 hashes for runner tarballs (SOT: docs/ci/RUNNER_LOCK.md)
 // These should be updated when runner version is bumped.
 var runnerHashes = map[string]string{
-	"osx-x64":   "", // fill from GitHub releases page
-	"osx-arm64": "", // fill from GitHub releases page
+	"osx-x64":   "b2c91416b3e4d579ae69fc2c381fc50dbda13f1b3fcc283187e2c75d1b173072",
+	"osx-arm64": "fbee07e42a134645d4f04f8146b0a3d0b3c948f0d6b2b9fa61f4318c1192ff79",
+}
+
+var mobileProfileLabels = map[string][]string{
+	"none":    nil,
+	"ios":     {"mobile", "ios", "fastlane", "xcode"},
+	"android": {"mobile", "android", "fastlane", "android-sdk"},
+	"all":     {"mobile", "ios", "android", "fastlane", "xcode", "android-sdk"},
 }
 
 type options struct {
-	apply      bool
-	repo       string
-	installDir string
-	labels     string
-	runnerName string
-	group      string
-	noService  bool
+	apply         bool
+	repo          string
+	installDir    string
+	labels        string
+	mobileProfile string
+	runnerName    string
+	group         string
+	noService     bool
 }
 
 func main() {
@@ -117,6 +125,7 @@ func parseOptions(args []string) (options, error) {
 	fs.StringVar(&opts.repo, "repo", "", "target repository (owner/repo)")
 	fs.StringVar(&opts.installDir, "install-dir", "", "runner install directory")
 	fs.StringVar(&opts.labels, "labels", defaultLabels, "comma-separated labels")
+	fs.StringVar(&opts.mobileProfile, "mobile-profile", "", "append mobile runner labels: none, ios, android, all")
 	fs.StringVar(&opts.runnerName, "name", "", "runner name")
 	fs.StringVar(&opts.group, "runner-group", "Default", "runner group")
 	fs.BoolVar(&opts.noService, "no-service", false, "skip svc.sh install/start")
@@ -134,11 +143,19 @@ func parseOptions(args []string) (options, error) {
 	if opts.installDir == "" {
 		opts.installDir = defaultInstallDir(opts.repo)
 	}
+	if opts.mobileProfile == "" {
+		opts.mobileProfile = strings.TrimSpace(os.Getenv("RUNNER_MOBILE_PROFILE"))
+	}
+	labels, err := labelsForMobileProfile(opts.labels, opts.mobileProfile)
+	if err != nil {
+		return options{}, err
+	}
+	opts.labels = labels
 	return opts, nil
 }
 
 func printUsage() {
-	fmt.Println("Usage: go run ./cmd/runner_setup [--apply] [--repo owner/repo] [--install-dir <dir>] [--labels <csv>] [--name <runner-name>] [--runner-group <group>] [--no-service]")
+	fmt.Println("Usage: go run ./cmd/runner_setup [--apply] [--repo owner/repo] [--install-dir <dir>] [--labels <csv>] [--mobile-profile none|ios|android|all] [--name <runner-name>] [--runner-group <group>] [--no-service]")
 }
 
 func defaultInstallDir(repo string) string {
@@ -171,6 +188,39 @@ func sanitizeForPath(s string) string {
 		return "default"
 	}
 	return out
+}
+
+func labelsForMobileProfile(baseLabels, profile string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(profile))
+	if normalized == "" {
+		normalized = "none"
+	}
+	labels, ok := mobileProfileLabels[normalized]
+	if !ok {
+		return "", fmt.Errorf("invalid_mobile_profile=%s", profile)
+	}
+	return appendCSVLabels(baseLabels, labels...), nil
+}
+
+func appendCSVLabels(baseLabels string, extraLabels ...string) string {
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(label string) {
+		label = strings.TrimSpace(label)
+		if label == "" || seen[label] {
+			return
+		}
+		seen[label] = true
+		out = append(out, label)
+	}
+
+	for _, label := range strings.Split(baseLabels, ",") {
+		add(label)
+	}
+	for _, label := range extraLabels {
+		add(label)
+	}
+	return strings.Join(out, ",")
 }
 
 func executeSetup(arch string, opts options) error {
@@ -207,10 +257,9 @@ func executeSetup(arch string, opts options) error {
 }
 
 func verifySHA256(arch, tarballPath string) error {
-	expectedHash := runnerHashes[arch]
-	if expectedHash == "" {
-		fmt.Println("SKIP: runner_setup sha256_verify reason=hash_not_configured")
-		return nil
+	expectedHash, ok := runnerHashes[arch]
+	if !ok || expectedHash == "" {
+		return fmt.Errorf("sha256_missing arch=%s version=v%s", arch, runnerVersion)
 	}
 	actualHash, err := fileSHA256(tarballPath)
 	if err != nil {

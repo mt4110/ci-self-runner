@@ -12,6 +12,8 @@
 - `DISCORD_RELEASES_WEBHOOK_URL`（任意、`#releases`）
 - `DISCORD_RUNBOOK_WEBHOOK_URL`（任意、通常は自動化しない）
 
+mobile build の signing / store 配布 Secret は `docs/ci/MOBILE_SECRETS_POLICY.md` を正とする。
+
 ## 漏えい時の対応（必須）
 
 1. 漏えいした Webhook を Discord 側で削除
@@ -30,3 +32,4 @@
 - Webhook URL を README / docs / Issue / PR コメントに直接貼る
 - CIログに Secret の生値を表示する
 - `out/logs/` や `out/reviewpack/`（bundle含む）に Secret 生値を残す
+- `.p12` / `.mobileprovision` / `.jks` / `.keystore` / App Store Connect `.p8` を repo に置く

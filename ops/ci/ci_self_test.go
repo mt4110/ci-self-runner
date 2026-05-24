@@ -84,7 +84,7 @@ func TestHelpListsRemoteCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help failed: %v\noutput:\n%s", err, out)
 	}
-	for _, want := range []string{"up", "act", "focus", "doctor", "config-init", "remote-ci", "remote-register", "remote-run-focus", "remote-up"} {
+	for _, want := range []string{"up", "act", "focus", "doctor", "config-init", "mobile-workflow", "remote-ci", "remote-register", "remote-run-focus", "remote-up"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q\noutput:\n%s", want, out)
 		}
@@ -721,6 +721,83 @@ func TestConfigInitWritesFile(t *testing.T) {
 	}
 	if !strings.Contains(content, "CI_SELF_REMOTE_IDENTITY=") {
 		t.Fatalf("missing remote identity placeholder in config\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, "CI_SELF_MOBILE_PROFILE=none") {
+		t.Fatalf("missing mobile profile default in config\ncontent:\n%s", content)
+	}
+}
+
+func TestMobileWorkflowCommandCreatesWorkflow(t *testing.T) {
+	tmp := t.TempDir()
+	out, err := runCiSelfInDirEnv(t, tmp, nil, "mobile-workflow", "--apply")
+	if err != nil {
+		t.Fatalf("mobile-workflow failed: %v\noutput:\n%s", err, out)
+	}
+
+	target := filepath.Join(tmp, ".github", "workflows", "mobile-build.yml")
+	body, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("expected mobile workflow: %v", readErr)
+	}
+	if !strings.Contains(string(body), `branches: ["main", "develop"]`) {
+		t.Fatalf("mobile workflow missing branch trigger\ncontent:\n%s", string(body))
+	}
+}
+
+func TestRegisterPassesMobileProfileToRunnerSetup(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "tool.log")
+
+	for name, body := range map[string]string{
+		"colima": fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "colima $*" >> %q
+exit 0
+`, logPath),
+		"gh": fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "gh $*" >> %q
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+  echo "mt4110"
+  exit 0
+fi
+exit 0
+`, logPath),
+		"go": fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "go $*" >> %q
+exit 0
+`, logPath),
+	} {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("write fake %s failed: %v", name, err)
+		}
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{"PATH=" + tmp + ":" + os.Getenv("PATH")},
+		"register",
+		"--repo",
+		"mt4110/mobile-app",
+		"--mobile-profile",
+		"ios",
+		"--skip-workflow",
+		"--skip-dispatch",
+	)
+	if err != nil {
+		t.Fatalf("register failed: %v\noutput:\n%s", err, out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("read tool log failed: %v", readErr)
+	}
+	logText := string(logBody)
+	if !strings.Contains(logText, "run ./cmd/runner_setup --apply --repo mt4110/mobile-app") ||
+		!strings.Contains(logText, "--mobile-profile ios") {
+		t.Fatalf("expected runner_setup to receive mobile profile\nlog:\n%s", logText)
 	}
 }
 

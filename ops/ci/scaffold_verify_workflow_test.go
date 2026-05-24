@@ -51,14 +51,38 @@ func TestScaffoldVerifyWorkflowCreatesWhenMissingNonInteractive(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("read failed: %v", readErr)
 	}
-	if !strings.Contains(string(body), "- uses: actions/checkout@v4") {
+	if !strings.Contains(string(body), "- uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5") {
 		t.Fatalf("expected checkout step in generated workflow\ncontent:\n%s", string(body))
 	}
-	if strings.Contains(string(body), "if: ${{ !env.ACT }}\n        uses: actions/checkout@v4") {
+	if strings.Contains(string(body), "if: ${{ !env.ACT }}\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5") {
 		t.Fatalf("checkout step should not be guarded by ACT\ncontent:\n%s", string(body))
 	}
 	if !strings.Contains(out, "OK: wrote "+target) {
 		t.Fatalf("expected write output\noutput:\n%s", out)
+	}
+}
+
+func TestScaffoldVerifyWorkflowGoModePinsSetupGo(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example\n\ngo 1.25.6\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod failed: %v", err)
+	}
+
+	out, err := runScaffoldVerifyWorkflow(t, repo, "--apply")
+	if err != nil {
+		t.Fatalf("scaffold failed: %v\noutput:\n%s", err, out)
+	}
+
+	target := filepath.Join(repo, ".github", "workflows", "verify.yml")
+	body, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("read failed: %v", readErr)
+	}
+	if !strings.Contains(string(body), "uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff") {
+		t.Fatalf("expected setup-go step to be SHA-pinned\ncontent:\n%s", string(body))
+	}
+	if strings.Contains(string(body), "actions/setup-go@"+"v5") {
+		t.Fatalf("setup-go action must be SHA-pinned\ncontent:\n%s", string(body))
 	}
 }
 
