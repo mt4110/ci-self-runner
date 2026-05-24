@@ -171,3 +171,5 @@ mise install
 - `verify-lite` の全体タイムアウトは `VERIFY_LITE_TIMEOUT_SEC` で指定する（既定: 600秒）
 - `ops/ci/run_verify_full.sh` は既定でホストUID/GIDを使って `docker run --user` を設定する
 - 必要に応じて `HOST_UID` / `HOST_GID` を明示指定できる
+- Docker daemon が未接続の場合、`ops/ci/run_verify_full.sh` は `colima start` で回復を試みる
+- Docker/Colima が回復できない場合も `out/verify-full.status` に `status=ERROR` と理由を残す

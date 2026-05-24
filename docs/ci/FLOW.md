@@ -34,6 +34,7 @@
 - キャッシュ契約: `/cache` を named volume として使う
 - ステータス契約: 最後に `STATUS: OK|ERROR|SKIP` を1行で出力する
 - ログ契約: 重要イベントは `OK:/SKIP:/ERROR:` で出力し、`out/verify-full.status` にも残す
+- Docker契約: Docker daemon が未接続の場合は Colima 起動を試し、回復できない場合も `out/verify-full.status` に `status=ERROR` を残す
 - 実行モード:
   - 通常: `VERIFY_DRY_RUN=0 VERIFY_GHA_SYNC=0`
   - dry-run: `VERIFY_DRY_RUN=1`
