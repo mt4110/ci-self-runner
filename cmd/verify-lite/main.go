@@ -112,6 +112,10 @@ func runSecretPatternScan() error {
 		"discord.com/api/" + "webhooks/",
 		"discordapp.com/api/" + "webhooks/",
 		"hooks.slack.com/" + "services/",
+		"-----BEGIN " + "PRIVATE KEY-----",
+		"-----BEGIN " + "RSA PRIVATE KEY-----",
+		"-----BEGIN " + "EC PRIVATE KEY-----",
+		"-----BEGIN " + "OPENSSH PRIVATE KEY-----",
 	}
 	skipDirs := map[string]bool{
 		".git":         true,
@@ -135,6 +139,10 @@ func runSecretPatternScan() error {
 		if strings.HasPrefix(path, ".git/") {
 			return nil
 		}
+		if isMobileSensitivePath(path) {
+			found = fmt.Sprintf("file=%s pattern=mobile_signing_file", path)
+			return errors.New("secret pattern matched")
+		}
 		info, err := d.Info()
 		if err != nil {
 			return nil
@@ -156,6 +164,10 @@ func runSecretPatternScan() error {
 				return errors.New("secret pattern matched")
 			}
 		}
+		if containsGoogleServiceAccountPrivateKey(text) {
+			found = fmt.Sprintf("file=%s pattern=google_service_account_private_key", path)
+			return errors.New("secret pattern matched")
+		}
 		return nil
 	})
 	if err != nil {
@@ -166,6 +178,38 @@ func runSecretPatternScan() error {
 	}
 	fmt.Println("OK: verify-lite secret_scan done")
 	return nil
+}
+
+func isMobileSensitivePath(path string) bool {
+	normalized := filepath.ToSlash(path)
+	base := filepath.Base(normalized)
+	lowerBase := strings.ToLower(base)
+	lowerPath := strings.ToLower(normalized)
+
+	for _, suffix := range []string{".p12", ".mobileprovision", ".provisionprofile", ".jks", ".keystore"} {
+		if strings.HasSuffix(lowerBase, suffix) {
+			return true
+		}
+	}
+	if strings.HasPrefix(lowerBase, "authkey_") && strings.HasSuffix(lowerBase, ".p8") {
+		return true
+	}
+	if lowerBase == "key.properties" && (strings.HasPrefix(lowerPath, "android/") || strings.Contains(lowerPath, "/android/")) {
+		return true
+	}
+	if strings.HasPrefix(lowerPath, "fastlane/.env") || strings.Contains(lowerPath, "/fastlane/.env") {
+		return true
+	}
+	if lowerBase == ".env.mobile" {
+		return true
+	}
+	return false
+}
+
+func containsGoogleServiceAccountPrivateKey(text string) bool {
+	return strings.Contains(text, "service_account") &&
+		strings.Contains(text, `"private_key"`) &&
+		strings.Contains(text, "-----BEGIN "+"PRIVATE KEY-----")
 }
 
 func runWorkflowPolicyScan() error {
@@ -209,6 +253,9 @@ func runWorkflowPolicyScan() error {
 		lines := strings.Split(text, "\n")
 		for idx, line := range lines {
 			trim := strings.TrimSpace(line)
+			if strings.HasPrefix(trim, "- ") {
+				trim = strings.TrimSpace(strings.TrimPrefix(trim, "- "))
+			}
 			if !strings.HasPrefix(trim, "uses:") {
 				continue
 			}

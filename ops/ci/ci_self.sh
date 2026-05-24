@@ -24,6 +24,7 @@ CONFIG_REMOTE_PROJECT_DIR=""
 CONFIG_REMOTE_IDENTITY=""
 CONFIG_REMOTE_CLI=""
 CONFIG_LABELS=""
+CONFIG_MOBILE_PROFILE=""
 CONFIG_RUNNER_NAME=""
 CONFIG_RUNNER_GROUP=""
 CONFIG_DISCORD_WEBHOOK_URL=""
@@ -173,6 +174,7 @@ load_config() {
       CI_SELF_REMOTE_IDENTITY) CONFIG_REMOTE_IDENTITY="$val" ;;
       CI_SELF_REMOTE_CLI) CONFIG_REMOTE_CLI="$val" ;;
       CI_SELF_LABELS) CONFIG_LABELS="$val" ;;
+      CI_SELF_MOBILE_PROFILE) CONFIG_MOBILE_PROFILE="$val" ;;
       CI_SELF_RUNNER_NAME) CONFIG_RUNNER_NAME="$val" ;;
       CI_SELF_RUNNER_GROUP) CONFIG_RUNNER_GROUP="$val" ;;
       CI_SELF_DISCORD_WEBHOOK_URL) CONFIG_DISCORD_WEBHOOK_URL="$val" ;;
@@ -195,6 +197,7 @@ Commands:
   focus      run-focus + optional PR auto-create
   doctor     Dependency/runner checks (with optional --fix)
   config-init  Create .ci-self.env template in current project
+  mobile-workflow  Scaffold fastlane mobile-build workflow
   register   One-command runner registration for current repo
   run-watch  One-command verify workflow dispatch + watch
   run-focus  run-watch + All Green check + PR template sync
@@ -212,6 +215,7 @@ Examples:
   ci-self focus
   ci-self doctor --fix
   ci-self config-init
+  ci-self mobile-workflow --apply
   ci-self register
   ci-self run-watch
   ci-self run-focus
@@ -760,6 +764,7 @@ cmd_register() {
   local repo_dir="$PWD"
   local ref=""
   local labels="self-hosted,mac-mini,colima,verify-full"
+  local mobile_profile=""
   local runner_name=""
   local runner_group="Default"
   local discord_webhook_url=""
@@ -772,6 +777,7 @@ cmd_register() {
       --repo-dir) repo_dir="${2:-}"; shift 2 ;;
       --ref) ref="${2:-}"; shift 2 ;;
       --labels) labels="${2:-}"; shift 2 ;;
+      --mobile-profile) mobile_profile="${2:-}"; shift 2 ;;
       --runner-name) runner_name="${2:-}"; shift 2 ;;
       --runner-group) runner_group="${2:-}"; shift 2 ;;
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
@@ -780,7 +786,7 @@ cmd_register() {
       --skip-dispatch) shift ;;
       -h|--help)
         cat <<'USAGE'
-Usage: ci-self register [--repo owner/repo] [--repo-dir path] [--labels csv] [--runner-name name] [--runner-group name] [--discord-webhook-url url] [--force-workflow] [--skip-workflow] [--skip-dispatch]
+Usage: ci-self register [--repo owner/repo] [--repo-dir path] [--labels csv] [--mobile-profile none|ios|android|all] [--runner-name name] [--runner-group name] [--discord-webhook-url url] [--force-workflow] [--skip-workflow] [--skip-dispatch]
 USAGE
         return 0
         ;;
@@ -796,6 +802,7 @@ USAGE
   repo_dir="$(expand_local_path "$repo_dir")"
   [[ -z "$ref" ]] && ref="$(resolve_ref "$ref")"
   [[ -n "$CONFIG_LABELS" && "$labels" == "self-hosted,mac-mini,colima,verify-full" ]] && labels="$CONFIG_LABELS"
+  [[ -z "$mobile_profile" && -n "$CONFIG_MOBILE_PROFILE" ]] && mobile_profile="$CONFIG_MOBILE_PROFILE"
   [[ -z "$runner_name" && -n "$CONFIG_RUNNER_NAME" ]] && runner_name="$CONFIG_RUNNER_NAME"
   [[ "$runner_group" == "Default" && -n "$CONFIG_RUNNER_GROUP" ]] && runner_group="$CONFIG_RUNNER_GROUP"
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
@@ -804,6 +811,7 @@ USAGE
 
   repo="$(resolve_repo "$repo")"
   local args=(--repo "$repo" --repo-dir "$repo_dir" --ref "$ref" --labels "$labels" --runner-group "$runner_group")
+  [[ -n "$mobile_profile" ]] && args+=(--mobile-profile "$mobile_profile")
   [[ -n "$runner_name" ]] && args+=(--runner-name "$runner_name")
   [[ -n "$discord_webhook_url" ]] && args+=(--discord-webhook-url "$discord_webhook_url")
   [[ "$force_workflow" -eq 1 ]] && args+=(--force-workflow)
@@ -915,6 +923,7 @@ cmd_up() {
   local repo_dir="$PWD"
   local ref=""
   local labels=""
+  local mobile_profile=""
   local runner_name=""
   local runner_group=""
   local discord_webhook_url=""
@@ -926,6 +935,7 @@ cmd_up() {
       --repo-dir) repo_dir="${2:-}"; shift 2 ;;
       --ref) ref="${2:-}"; shift 2 ;;
       --labels) labels="${2:-}"; shift 2 ;;
+      --mobile-profile) mobile_profile="${2:-}"; shift 2 ;;
       --runner-name) runner_name="${2:-}"; shift 2 ;;
       --runner-group) runner_group="${2:-}"; shift 2 ;;
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
@@ -934,6 +944,7 @@ cmd_up() {
       -h|--help)
         cat <<'USAGE'
 Usage: ci-self up [--repo owner/repo] [--repo-dir path] [--ref branch] [--labels csv]
+                  [--mobile-profile none|ios|android|all]
                   [--runner-name name] [--runner-group name] [--discord-webhook-url url]
                   [--force-workflow] [--skip-workflow]
 USAGE
@@ -951,6 +962,7 @@ USAGE
   repo_dir="$(expand_local_path "$repo_dir")"
   [[ -z "$ref" ]] && ref="$(resolve_ref "$ref")"
   [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
+  [[ -z "$mobile_profile" && -n "$CONFIG_MOBILE_PROFILE" ]] && mobile_profile="$CONFIG_MOBILE_PROFILE"
   [[ -z "$runner_name" && -n "$CONFIG_RUNNER_NAME" ]] && runner_name="$CONFIG_RUNNER_NAME"
   [[ -z "$runner_group" && -n "$CONFIG_RUNNER_GROUP" ]] && runner_group="$CONFIG_RUNNER_GROUP"
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
@@ -960,6 +972,7 @@ USAGE
   local register_args=(--repo-dir "$repo_dir" --ref "$ref")
   [[ -n "$repo" ]] && register_args+=(--repo "$repo")
   [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+  [[ -n "$mobile_profile" ]] && register_args+=(--mobile-profile "$mobile_profile")
   [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
   [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
   [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
@@ -1361,6 +1374,7 @@ CI_SELF_REMOTE_CLI=ci-self
 
 # Optional runner defaults
 CI_SELF_LABELS=self-hosted,mac-mini,colima,verify-full
+CI_SELF_MOBILE_PROFILE=none
 CI_SELF_RUNNER_NAME=
 CI_SELF_RUNNER_GROUP=Default
 CI_SELF_DISCORD_WEBHOOK_URL=
@@ -1369,6 +1383,46 @@ CI_SELF_SKIP_WORKFLOW=0
 CI_SELF_PR_BASE=main
 EOF
   echo "OK: wrote config $path"
+}
+
+cmd_mobile_workflow() {
+  local repo_dir="$PWD"
+  local apply=0
+  local force=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--repo-dir)
+        repo_dir="${2:-}"
+        shift 2
+        ;;
+      --apply)
+        apply=1
+        shift
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: ci-self mobile-workflow [--repo path] [--apply] [--force]
+USAGE
+        return 0
+        ;;
+      *)
+        echo "ERROR: unknown option for mobile-workflow: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  [[ -n "$CONFIG_PROJECT_DIR" && "$repo_dir" == "$PWD" ]] && repo_dir="$CONFIG_PROJECT_DIR"
+  repo_dir="$(expand_local_path "$repo_dir")"
+  local args=(--repo "$repo_dir")
+  [[ "$apply" -eq 1 ]] && args+=(--apply)
+  [[ "$force" -eq 1 ]] && args+=(--force)
+  bash "$ROOT_DIR/ops/ci/scaffold_mobile_build_workflow.sh" "${args[@]}"
 }
 
 quote_words() {
@@ -1780,6 +1834,7 @@ cmd_remote_ci() {
   local remote_cli="ci-self"
   local repo=""
   local labels=""
+  local mobile_profile=""
   local runner_name=""
   local runner_group=""
   local discord_webhook_url=""
@@ -1798,6 +1853,7 @@ cmd_remote_ci() {
       --remote-cli) remote_cli="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
       --labels) labels="${2:-}"; shift 2 ;;
+      --mobile-profile) mobile_profile="${2:-}"; shift 2 ;;
       --runner-name) runner_name="${2:-}"; shift 2 ;;
       --runner-group) runner_group="${2:-}"; shift 2 ;;
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
@@ -1810,7 +1866,8 @@ cmd_remote_ci() {
         cat <<'USAGE'
 Usage: ci-self remote-ci --host <ssh-host> [-i identity_file] [--project-dir path] [--local-dir path] [--out-dir path]
                          [--repo owner/repo] [--remote-cli path]
-                         [--labels csv] [--runner-name name] [--runner-group name]
+                         [--labels csv] [--mobile-profile none|ios|android|all]
+                         [--runner-name name] [--runner-group name]
                          [--discord-webhook-url url]
                          [--verify-dry-run 0|1] [--verify-gha-sync 0|1]
                          [--sync-git-dir] [--skip-bootstrap] [--no-sync]
@@ -1829,6 +1886,7 @@ USAGE
   [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
+  [[ -z "$mobile_profile" && -n "$CONFIG_MOBILE_PROFILE" ]] && mobile_profile="$CONFIG_MOBILE_PROFILE"
   [[ -z "$runner_name" && -n "$CONFIG_RUNNER_NAME" ]] && runner_name="$CONFIG_RUNNER_NAME"
   [[ -z "$runner_group" && -n "$CONFIG_RUNNER_GROUP" ]] && runner_group="$CONFIG_RUNNER_GROUP"
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
@@ -1879,6 +1937,7 @@ USAGE
       *)
         local register_args=(register --repo "$repo" --repo-dir "$project_dir" --skip-workflow)
         [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+        [[ -n "$mobile_profile" ]] && register_args+=(--mobile-profile "$mobile_profile")
         [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
         [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
         [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
@@ -1929,6 +1988,7 @@ cmd_remote_register() {
   local remote_cli="ci-self"
   local repo=""
   local labels=""
+  local mobile_profile=""
   local runner_name=""
   local runner_group=""
   local discord_webhook_url=""
@@ -1943,6 +2003,7 @@ cmd_remote_register() {
       --remote-cli) remote_cli="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
       --labels) labels="${2:-}"; shift 2 ;;
+      --mobile-profile) mobile_profile="${2:-}"; shift 2 ;;
       --runner-name) runner_name="${2:-}"; shift 2 ;;
       --runner-group) runner_group="${2:-}"; shift 2 ;;
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
@@ -1951,7 +2012,8 @@ cmd_remote_register() {
       -h|--help)
         cat <<'USAGE'
 Usage: ci-self remote-register --host <ssh-host> [-i identity_file] [--project-dir path] [--repo owner/repo] [--remote-cli path]
-                               [--labels csv] [--runner-name name] [--runner-group name]
+                               [--labels csv] [--mobile-profile none|ios|android|all]
+                               [--runner-name name] [--runner-group name]
                                [--discord-webhook-url url] [--force-workflow] [--skip-workflow]
 USAGE
         return 0
@@ -1968,6 +2030,7 @@ USAGE
   [[ "$remote_cli" == "ci-self" && -n "$CONFIG_REMOTE_CLI" ]] && remote_cli="$CONFIG_REMOTE_CLI"
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
+  [[ -z "$mobile_profile" && -n "$CONFIG_MOBILE_PROFILE" ]] && mobile_profile="$CONFIG_MOBILE_PROFILE"
   [[ -z "$runner_name" && -n "$CONFIG_RUNNER_NAME" ]] && runner_name="$CONFIG_RUNNER_NAME"
   [[ -z "$runner_group" && -n "$CONFIG_RUNNER_GROUP" ]] && runner_group="$CONFIG_RUNNER_GROUP"
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
@@ -1984,6 +2047,7 @@ USAGE
   local args=(register)
   [[ -n "$repo" ]] && args+=(--repo "$repo")
   [[ -n "$labels" ]] && args+=(--labels "$labels")
+  [[ -n "$mobile_profile" ]] && args+=(--mobile-profile "$mobile_profile")
   [[ -n "$runner_name" ]] && args+=(--runner-name "$runner_name")
   [[ -n "$runner_group" ]] && args+=(--runner-group "$runner_group")
   [[ -n "$discord_webhook_url" ]] && args+=(--discord-webhook-url "$discord_webhook_url")
@@ -2048,6 +2112,7 @@ cmd_remote_up() {
   local repo=""
   local ref=""
   local labels=""
+  local mobile_profile=""
   local runner_name=""
   local runner_group=""
   local discord_webhook_url=""
@@ -2063,6 +2128,7 @@ cmd_remote_up() {
       --repo) repo="${2:-}"; shift 2 ;;
       --ref) ref="${2:-}"; shift 2 ;;
       --labels) labels="${2:-}"; shift 2 ;;
+      --mobile-profile) mobile_profile="${2:-}"; shift 2 ;;
       --runner-name) runner_name="${2:-}"; shift 2 ;;
       --runner-group) runner_group="${2:-}"; shift 2 ;;
       --discord-webhook-url) discord_webhook_url="${2:-}"; shift 2 ;;
@@ -2071,7 +2137,8 @@ cmd_remote_up() {
       -h|--help)
         cat <<'USAGE'
 Usage: ci-self remote-up --host <ssh-host> [-i identity_file] [--project-dir path] [--repo owner/repo] [--ref branch]
-                         [--remote-cli path] [--labels csv] [--runner-name name]
+                         [--remote-cli path] [--labels csv] [--mobile-profile none|ios|android|all]
+                         [--runner-name name]
                          [--runner-group name] [--discord-webhook-url url]
                          [--force-workflow] [--skip-workflow]
 USAGE
@@ -2090,6 +2157,7 @@ USAGE
   [[ -z "$repo" && -n "$CONFIG_REPO" ]] && repo="$CONFIG_REPO"
   [[ -z "$ref" ]] && ref="$(resolve_ref "$ref")"
   [[ -z "$labels" && -n "$CONFIG_LABELS" ]] && labels="$CONFIG_LABELS"
+  [[ -z "$mobile_profile" && -n "$CONFIG_MOBILE_PROFILE" ]] && mobile_profile="$CONFIG_MOBILE_PROFILE"
   [[ -z "$runner_name" && -n "$CONFIG_RUNNER_NAME" ]] && runner_name="$CONFIG_RUNNER_NAME"
   [[ -z "$runner_group" && -n "$CONFIG_RUNNER_GROUP" ]] && runner_group="$CONFIG_RUNNER_GROUP"
   [[ -z "$discord_webhook_url" && -n "$CONFIG_DISCORD_WEBHOOK_URL" ]] && discord_webhook_url="$CONFIG_DISCORD_WEBHOOK_URL"
@@ -2107,6 +2175,7 @@ USAGE
   [[ -n "$identity" ]] && register_args+=(-i "$identity")
   [[ -n "$repo" ]] && register_args+=(--repo "$repo")
   [[ -n "$labels" ]] && register_args+=(--labels "$labels")
+  [[ -n "$mobile_profile" ]] && register_args+=(--mobile-profile "$mobile_profile")
   [[ -n "$runner_name" ]] && register_args+=(--runner-name "$runner_name")
   [[ -n "$runner_group" ]] && register_args+=(--runner-group "$runner_group")
   [[ -n "$discord_webhook_url" ]] && register_args+=(--discord-webhook-url "$discord_webhook_url")
@@ -2129,6 +2198,7 @@ main() {
     focus) cmd_focus "$@" ;;
     doctor) cmd_doctor "$@" ;;
     config-init) cmd_config_init "$@" ;;
+    mobile-workflow) cmd_mobile_workflow "$@" ;;
     register) cmd_register "$@" ;;
     run-watch) cmd_run_watch "$@" ;;
     run-focus) cmd_run_watch --all-green --sync-pr-template "$@" ;;

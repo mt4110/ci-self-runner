@@ -237,6 +237,7 @@ ci-self act --project-dir ~/dev/<target-repo> --job <job-id>
 - `ci-self up`: ローカル最短（register + run-focus）
 - `ci-self act`: `act` で verify workflow/job をローカル実行し、対象を絞って概算時間を測る
 - `ci-self focus`: run-focus 後、PR未作成なら自動作成し checks を監視
+- `ci-self mobile-workflow`: fastlane前提の `mobile-build.yml` 雛形を生成
 - `ci-self remote-ci`: 鍵必須・同期・別端末での verify 実行・結果回収を1コマンドで実行
 - `ci-self doctor --fix`: 依存/gh auth/colima/docker/runner_health を診断し可能な範囲で修復
 - `ci-self doctor --repo-dir <path>`: `flake.nix` リポジトリの Nix 到達性も含めて診断
@@ -244,6 +245,28 @@ ci-self act --project-dir ~/dev/<target-repo> --job <job-id>
 - `ci-self config-init`: `.ci-self.env` テンプレート生成
 
 注: `doctor --fix` は `gh auth login` だけは自動化できないため、未ログイン時は手動ログインが必要です。
+
+## Mobile build（fastlane）
+
+iOS / Android 用 runner label は `--mobile-profile` で追加できます。
+
+```bash
+ci-self register --mobile-profile ios
+ci-self register --mobile-profile android
+ci-self register --mobile-profile all
+```
+
+対象アプリ repo では、develop/main 向けの雛形を作れます。
+
+```bash
+ci-self mobile-workflow --apply
+```
+
+詳細:
+
+- `docs/ci/MOBILE_LABELS.md`
+- `docs/ci/MOBILE_SECRETS_POLICY.md`
+- `docs/ci/MAC_BUILD_HOST_RUNBOOK.md`
 
 ## 初回セットアップ（対象リポジトリ）
 

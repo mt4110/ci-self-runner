@@ -11,6 +11,7 @@ Options:
   --repo-dir <path>       Local path of target repo (optional; used to scaffold verify.yml/pr template)
   --ref <branch>          Branch/ref for workflow dispatch (default: main)
   --labels <csv>          Runner labels for registration (default: self-hosted,mac-mini,colima,verify-full)
+  --mobile-profile <name> Append mobile labels: none, ios, android, all (default: none)
   --runner-name <name>    Runner name override
   --runner-group <name>   Runner group (default: Default)
   --discord-webhook-url <url>
@@ -69,6 +70,7 @@ REPO=""
 REPO_DIR=""
 REF="main"
 LABELS="self-hosted,mac-mini,colima,verify-full"
+MOBILE_PROFILE="${CI_SELF_MOBILE_PROFILE:-none}"
 RUNNER_NAME=""
 RUNNER_GROUP="Default"
 DISCORD_WEBHOOK_URL=""
@@ -92,6 +94,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --labels)
       LABELS="${2:-}"
+      shift 2
+      ;;
+    --mobile-profile)
+      MOBILE_PROFILE="${2:-}"
       shift 2
       ;;
     --runner-name)
@@ -155,7 +161,7 @@ echo "OK: ensure_colima_running"
 colima status >/dev/null 2>&1 || colima start
 
 echo "OK: runner_setup_start"
-runner_setup_args=(--apply --repo "$REPO" --labels "$LABELS" --runner-group "$RUNNER_GROUP")
+runner_setup_args=(--apply --repo "$REPO" --labels "$LABELS" --mobile-profile "$MOBILE_PROFILE" --runner-group "$RUNNER_GROUP")
 if [[ -n "$RUNNER_NAME" ]]; then
   runner_setup_args+=(--name "$RUNNER_NAME")
 fi

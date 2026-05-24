@@ -189,10 +189,33 @@ Keep in mind:
 - `ci-self up`: fastest local path (`register + run-focus`)
 - `ci-self act`: run a selected verify workflow/job locally via `act` for rough timing
 - `ci-self focus`: runs `run-focus`, creates a PR if missing, then watches checks
+- `ci-self mobile-workflow`: scaffolds a fastlane-based `mobile-build.yml`
 - `ci-self remote-ci`: SSH-required sync + remote verify + result collection in one command
 - `ci-self doctor --fix`: checks dependencies, `gh auth`, Colima, Docker, and runner health
 - `ci-self remote-up`: older SSH path for `register + run-focus` without syncing
 - `ci-self config-init`: generates a `.ci-self.env` template
+
+## Mobile Build (fastlane)
+
+Use `--mobile-profile` to add iOS / Android runner capability labels.
+
+```bash
+ci-self register --mobile-profile ios
+ci-self register --mobile-profile android
+ci-self register --mobile-profile all
+```
+
+In a target mobile app repository, scaffold the `main` / `develop` workflow:
+
+```bash
+ci-self mobile-workflow --apply
+```
+
+See:
+
+- `docs/ci/MOBILE_LABELS.md`
+- `docs/ci/MOBILE_SECRETS_POLICY.md`
+- `docs/ci/MAC_BUILD_HOST_RUNBOOK.md`
 
 ## Security Assumptions
 
@@ -205,4 +228,7 @@ Keep in mind:
 - `README.md`
 - `docs/ci/QUICKSTART.md`
 - `docs/ci/RUNBOOK.md`
+- `docs/ci/MOBILE_LABELS.md`
+- `docs/ci/MOBILE_SECRETS_POLICY.md`
+- `docs/ci/MAC_BUILD_HOST_RUNBOOK.md`
 - `docs/ci/SECURITY_HARDENING_TASK.md`
