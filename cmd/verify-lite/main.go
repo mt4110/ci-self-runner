@@ -186,13 +186,10 @@ func isMobileSensitivePath(path string) bool {
 	lowerBase := strings.ToLower(base)
 	lowerPath := strings.ToLower(normalized)
 
-	for _, suffix := range []string{".p12", ".mobileprovision", ".provisionprofile", ".jks", ".keystore"} {
+	for _, suffix := range []string{".p12", ".mobileprovision", ".provisionprofile", ".p8", ".jks", ".keystore"} {
 		if strings.HasSuffix(lowerBase, suffix) {
 			return true
 		}
-	}
-	if strings.HasPrefix(lowerBase, "authkey_") && strings.HasSuffix(lowerBase, ".p8") {
-		return true
 	}
 	if lowerBase == "key.properties" && (strings.HasPrefix(lowerPath, "android/") || strings.Contains(lowerPath, "/android/")) {
 		return true

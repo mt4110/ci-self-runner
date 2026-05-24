@@ -18,6 +18,8 @@ func TestIsMobileSensitivePath(t *testing.T) {
 		"apps/mobile/fastlane/.env.production",
 		"AuthKey_ABC123.p8",
 		"authkey_abc123.p8",
+		"ios/asc_api_key.p8",
+		"secrets/custom_name.P8",
 	} {
 		if !isMobileSensitivePath(path) {
 			t.Fatalf("expected sensitive mobile path: %s", path)
