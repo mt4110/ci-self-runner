@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Docker経由で verify-full を実行し、ホスト側のstatus契約を保つ
+# 通常実行は Docker 経由、dry-run はホスト側で status 契約を保つ
 # SOT: out/verify-full.status
 # ホスト側ラッパ: go run ./cmd/verify_full_host (--dry-run)
 
@@ -66,6 +66,53 @@ write_error_status() {
   } >"${STATUS_PATH}"
 }
 
+write_dry_run_ok_status() {
+  stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+  mode="$(verify_mode)"
+  gha_sync="$(gha_sync_value)"
+  log_dir="${OUT_DIR}/logs"
+  log_path="${log_dir}/verify-full-${stamp}.log"
+
+  mkdir -p "${log_dir}"
+  {
+    echo "OK: verify-full status=OK mode=${mode}"
+    echo "timestamp=${stamp}"
+    echo "status=OK"
+    echo "mode=${mode}"
+    echo "gha_sync=${gha_sync}"
+    if [ -n "${GITHUB_RUN_ID}" ]; then
+      echo "OK: github_run_id=${GITHUB_RUN_ID}"
+      echo "github_run_id=${GITHUB_RUN_ID}"
+    fi
+    if [ -n "${GITHUB_SHA}" ]; then
+      echo "OK: github_sha=${GITHUB_SHA}"
+      echo "github_sha=${GITHUB_SHA}"
+    fi
+    if [ -n "${GITHUB_REF_NAME}" ]; then
+      echo "OK: github_ref=${GITHUB_REF_NAME}"
+      echo "github_ref=${GITHUB_REF_NAME}"
+    fi
+    echo "source=run_verify_full"
+  } >"${STATUS_PATH}"
+
+  {
+    if [ "${gha_sync}" = "true" ]; then
+      echo "::notice::verify-full dry-run start"
+    fi
+    echo "OK: verify-full started stamp=${stamp}"
+    echo "OK: mode=${mode}"
+    echo "OK: gha_sync=${gha_sync}"
+    echo "SKIP: docker reason=dry_run"
+    echo "OK: verify-full completed"
+    if [ "${gha_sync}" = "true" ]; then
+      echo "::notice::verify-full dry-run done"
+    fi
+    echo "STATUS: OK"
+  } >"${log_path}"
+
+  cat "${log_path}"
+}
+
 ensure_docker_ready() {
   if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: docker command not found" >&2
@@ -90,6 +137,11 @@ ensure_docker_ready() {
   DOCKER_READY_REASON="docker_daemon_unavailable"
   return 1
 }
+
+if [ "${VERIFY_DRY_RUN}" = "1" ]; then
+  write_dry_run_ok_status
+  exit 0
+fi
 
 if ! ensure_docker_ready; then
   write_error_status "${DOCKER_READY_REASON}"
