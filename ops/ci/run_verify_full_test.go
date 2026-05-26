@@ -25,16 +25,12 @@ func writeFakeCommand(t *testing.T, dir string, name string, body string) {
 	}
 }
 
-func TestRunVerifyFullWritesStatusWhenDockerUnavailable(t *testing.T) {
+func TestRunVerifyFullDryRunSkipsDockerWhenUnavailable(t *testing.T) {
 	binDir := t.TempDir()
 	outDir := filepath.Join(t.TempDir(), "out")
 
 	writeFakeCommand(t, binDir, "docker", `#!/usr/bin/env sh
-if [ "$1" = "info" ]; then
-  echo "docker unavailable" >&2
-  exit 1
-fi
-echo "unexpected docker command: $*" >&2
+echo "docker should not be called during dry-run: $*" >&2
 exit 99
 `)
 
@@ -47,29 +43,39 @@ exit 99
 		"GITHUB_SHA=abc123",
 		"GITHUB_REF_NAME=feature-branch",
 	})
-	if err == nil {
-		t.Fatalf("expected docker unavailable failure\noutput:\n%s", out)
+	if err != nil {
+		t.Fatalf("expected dry-run to succeed without docker: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "SKIP: docker reason=dry_run") {
+		t.Fatalf("expected docker skip message\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "STATUS: OK") {
+		t.Fatalf("expected OK status line\noutput:\n%s", out)
 	}
 
 	statusPath := filepath.Join(outDir, "verify-full.status")
 	body, readErr := os.ReadFile(statusPath)
 	if readErr != nil {
-		t.Fatalf("expected status file after docker failure: %v\noutput:\n%s", readErr, out)
+		t.Fatalf("expected status file after dry-run: %v\noutput:\n%s", readErr, out)
 	}
 	status := string(body)
 	for _, want := range []string{
-		"status=ERROR",
+		"status=OK",
 		"mode=dry-run",
 		"gha_sync=true",
 		"github_run_id=123456",
 		"github_sha=abc123",
 		"github_ref=feature-branch",
 		"source=run_verify_full",
-		"reason=docker_daemon_unavailable",
 	} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("status missing %q\nstatus:\n%s\noutput:\n%s", want, status, out)
 		}
+	}
+
+	logs, globErr := filepath.Glob(filepath.Join(outDir, "logs", "verify-full-*.log"))
+	if globErr != nil || len(logs) != 1 {
+		t.Fatalf("expected one dry-run log file, got %v err=%v\noutput:\n%s", logs, globErr, out)
 	}
 }
 
@@ -79,7 +85,6 @@ func TestRunVerifyFullWritesSpecificStatusWhenDockerCommandMissing(t *testing.T)
 	out, err := runVerifyFullWithEnv(t, []string{
 		"PATH=/usr/bin:/bin",
 		"OUT_DIR=" + outDir,
-		"VERIFY_DRY_RUN=1",
 	})
 	if err == nil {
 		t.Fatalf("expected missing docker failure\noutput:\n%s", out)
@@ -96,6 +101,7 @@ func TestRunVerifyFullWritesSpecificStatusWhenDockerCommandMissing(t *testing.T)
 	status := string(body)
 	for _, want := range []string{
 		"status=ERROR",
+		"mode=full",
 		"source=run_verify_full",
 		"reason=docker_command_missing",
 	} {
