@@ -84,7 +84,7 @@ func TestHelpListsRemoteCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help failed: %v\noutput:\n%s", err, out)
 	}
-	for _, want := range []string{"up", "act", "focus", "doctor", "config-init", "mobile-workflow", "remote-ci", "remote-register", "remote-run-focus", "remote-up"} {
+	for _, want := range []string{"up", "act", "focus", "doctor", "update", "config-init", "mobile-workflow", "remote-ci", "remote-register", "remote-run-focus", "remote-up"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q\noutput:\n%s", want, out)
 		}
@@ -698,6 +698,157 @@ func TestDoctorHelp(t *testing.T) {
 	}
 	if !strings.Contains(out, "Usage: ci-self doctor") {
 		t.Fatalf("doctor help output missing usage\noutput:\n%s", out)
+	}
+}
+
+func TestUpdateHelp(t *testing.T) {
+	out, err := runCiSelf(t, "update", "--help")
+	if err != nil {
+		t.Fatalf("update --help failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Usage: ci-self update") {
+		t.Fatalf("update help output missing usage\noutput:\n%s", out)
+	}
+}
+
+func TestUpdateWarnsForOutdatedRunnerAndAct(t *testing.T) {
+	tmp := t.TempDir()
+	runnerBinDir := filepath.Join(tmp, ".local", "ci-runner-test", "bin")
+	if err := os.MkdirAll(runnerBinDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake runner failed: %v", err)
+	}
+	runnerListener := filepath.Join(runnerBinDir, "Runner.Listener")
+	if err := os.WriteFile(runnerListener, []byte("#!/usr/bin/env bash\necho 2.321.0\n"), 0o755); err != nil {
+		t.Fatalf("write fake runner listener failed: %v", err)
+	}
+
+	actPath := filepath.Join(tmp, "act")
+	if err := os.WriteFile(actPath, []byte("#!/usr/bin/env bash\necho 'act version 0.2.87'\n"), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+	brewPath := filepath.Join(tmp, "brew")
+	brewScript := `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "list" && "${2:-}" == "--versions" && "${3:-}" == "act" ]]; then
+  echo "act 0.2.87"
+  exit 0
+fi
+if [[ "${1:-}" == "outdated" && "${2:-}" == "--quiet" && "${3:-}" == "act" ]]; then
+  echo "act"
+  exit 0
+fi
+if [[ "${1:-}" == "list" && "${2:-}" == "--versions" ]]; then
+  exit 1
+fi
+exit 0
+`
+	if err := os.WriteFile(brewPath, []byte(brewScript), 0o755); err != nil {
+		t.Fatalf("write fake brew failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{
+			"HOME=" + tmp,
+			"PATH=" + tmp + ":" + os.Getenv("PATH"),
+			"CI_SELF_UPDATE_LATEST_RUNNER_TAG=v2.334.0",
+		},
+		"update",
+	)
+	if err != nil {
+		t.Fatalf("update failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "WARN: update check=runner") ||
+		!strings.Contains(out, "current=v2.321.0 latest=v2.334.0") {
+		t.Fatalf("expected outdated runner warning\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "WARN: update check=dependency name=act") ||
+		!strings.Contains(out, "brew update && brew upgrade act") {
+		t.Fatalf("expected outdated act warning\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "STATUS: OK") {
+		t.Fatalf("expected OK status\noutput:\n%s", out)
+	}
+}
+
+func TestUpdateApplyUpgradesOnlyBrewManagedOutdatedTools(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "brew.log")
+
+	actPath := filepath.Join(tmp, "act")
+	if err := os.WriteFile(actPath, []byte("#!/usr/bin/env bash\necho 'act version 0.2.87'\n"), 0o755); err != nil {
+		t.Fatalf("write fake act failed: %v", err)
+	}
+
+	brewPath := filepath.Join(tmp, "brew")
+	brewScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+echo "brew $*" >> %q
+if [[ "${1:-}" == "list" && "${2:-}" == "--versions" && "${3:-}" == "act" ]]; then
+  echo "act 0.2.87"
+  exit 0
+fi
+if [[ "${1:-}" == "outdated" && "${2:-}" == "--quiet" && "${3:-}" == "act" ]]; then
+  echo "act"
+  exit 0
+fi
+if [[ "${1:-}" == "update" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "upgrade" && "${2:-}" == "act" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "list" && "${2:-}" == "--versions" ]]; then
+  exit 1
+fi
+exit 0
+`, logPath)
+	if err := os.WriteFile(brewPath, []byte(brewScript), 0o755); err != nil {
+		t.Fatalf("write fake brew failed: %v", err)
+	}
+
+	out, err := runCiSelfInDirEnv(
+		t,
+		tmp,
+		[]string{
+			"HOME=" + tmp,
+			"PATH=" + tmp + ":" + os.Getenv("PATH"),
+		},
+		"update",
+		"--apply",
+		"--no-runner-scan",
+	)
+	if err != nil {
+		t.Fatalf("update --apply failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "OK: update apply=brew_update") ||
+		!strings.Contains(out, "OK: update apply=brew_upgrade package=act") ||
+		!strings.Contains(out, "STATUS: OK") {
+		t.Fatalf("expected apply output for act\noutput:\n%s", out)
+	}
+
+	logBody, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("failed to read brew log: %v", readErr)
+	}
+	logText := string(logBody)
+	if !strings.Contains(logText, "brew update") {
+		t.Fatalf("expected brew update\nlog:\n%s", logText)
+	}
+	updateIdx := strings.Index(logText, "brew update")
+	outdatedIdx := strings.Index(logText, "brew outdated --quiet act")
+	if outdatedIdx < 0 {
+		t.Fatalf("expected brew outdated act\nlog:\n%s", logText)
+	}
+	if updateIdx > outdatedIdx {
+		t.Fatalf("brew update must run before brew outdated in apply mode\nlog:\n%s", logText)
+	}
+	if !strings.Contains(logText, "brew upgrade act") {
+		t.Fatalf("expected brew upgrade act\nlog:\n%s", logText)
+	}
+	if strings.Contains(logText, "brew upgrade gh") || strings.Contains(logText, "brew upgrade colima") {
+		t.Fatalf("unexpected upgrade for non-brew-managed tools\nlog:\n%s", logText)
 	}
 }
 

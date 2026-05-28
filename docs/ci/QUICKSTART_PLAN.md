@@ -40,7 +40,7 @@ else:
     print("ERROR: step=runner_lock reason=invalid_lock")
     state.stop = true
   else:
-    print("OK: step=runner_lock version=v2.331.0")
+    print("OK: step=runner_lock version=v2.334.0")
 
 step = "runner_setup"
 if state.stop:

@@ -192,8 +192,12 @@ Keep in mind:
 - `ci-self mobile-workflow`: scaffolds a fastlane-based `mobile-build.yml`
 - `ci-self remote-ci`: SSH-required sync + remote verify + result collection in one command
 - `ci-self doctor --fix`: checks dependencies, `gh auth`, Colima, Docker, and runner health
+- `ci-self update`: checks the runner and related tools such as `act`, `gh`, and Colima for available updates
+- `ci-self update --apply`: explicitly upgrades already-installed Homebrew-managed tools only
 - `ci-self remote-up`: older SSH path for `register + run-focus` without syncing
 - `ci-self config-init`: generates a `.ci-self.env` template
+
+Note: the GitHub Actions runner itself is left to its built-in auto-update path; `ci-self update --apply` does not force-upgrade it.
 
 ## Mobile Build (fastlane)
 

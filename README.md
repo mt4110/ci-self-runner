@@ -240,11 +240,14 @@ ci-self act --project-dir ~/dev/<target-repo> --job <job-id>
 - `ci-self mobile-workflow`: fastlane前提の `mobile-build.yml` 雛形を生成
 - `ci-self remote-ci`: 鍵必須・同期・別端末での verify 実行・結果回収を1コマンドで実行
 - `ci-self doctor --fix`: 依存/gh auth/colima/docker/runner_health を診断し可能な範囲で修復
+- `ci-self update`: runner 本体と周辺ツール（act/gh/colima 等）の更新候補を確認
+- `ci-self update --apply`: 既に Homebrew 管理されている周辺ツールだけを明示更新
 - `ci-self doctor --repo-dir <path>`: `flake.nix` リポジトリの Nix 到達性も含めて診断
 - `ci-self remote-up`: SSH先で register + run-focus（同期しない旧導線）
 - `ci-self config-init`: `.ci-self.env` テンプレート生成
 
 注: `doctor --fix` は `gh auth login` だけは自動化できないため、未ログイン時は手動ログインが必要です。
+注: runner 本体は GitHub Actions runner の自動更新に任せ、`ci-self update --apply` では強制更新しません。
 
 ## Mobile build（fastlane）
 

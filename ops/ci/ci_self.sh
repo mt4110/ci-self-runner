@@ -46,6 +46,7 @@ parse_decimal_index() {
 
 expand_local_path() {
   local p="$1"
+  # shellcheck disable=SC2088
   if [[ "$p" == "~/"* ]]; then
     printf '%s\n' "${HOME}/${p#"~/"}"
   else
@@ -154,6 +155,7 @@ load_config() {
     return 0
   fi
 
+  # shellcheck disable=SC2034
   CONFIG_FILE="$f"
 
   local raw line key val
@@ -196,6 +198,7 @@ Commands:
   act        Run selected workflow/job locally via act for rough timing
   focus      run-focus + optional PR auto-create
   doctor     Dependency/runner checks (with optional --fix)
+  update     Check runner/dependency updates, optionally upgrade brew-managed tools
   config-init  Create .ci-self.env template in current project
   mobile-workflow  Scaffold fastlane mobile-build workflow
   register   One-command runner registration for current repo
@@ -214,6 +217,8 @@ Examples:
   ci-self act --job verify-lite
   ci-self focus
   ci-self doctor --fix
+  ci-self update
+  ci-self update --apply
   ci-self config-init
   ci-self mobile-workflow --apply
   ci-self register
@@ -328,6 +333,7 @@ list_act_jobs() {
     [[ "$rows_started" -eq 1 ]] || continue
     case "$line" in
       [0-9]*)
+        # shellcheck disable=SC2086
         set -- $line
         [[ $# -ge 2 ]] && printf '%s\n' "$2"
         ;;
@@ -548,7 +554,7 @@ ensure_verify_workflow_nix_compat() {
 
 resolve_verify_workflow_id() {
   local repo="$1"
-  local workflows=""
+  local workflow_rows=""
   local id=""
   local path=""
   local name=""
@@ -558,7 +564,7 @@ resolve_verify_workflow_id() {
   local verify_name_id=""
   local verify_path_id=""
 
-  workflows="$(gh api "repos/$repo/actions/workflows" --jq '.workflows[]? | [.id, (.path // ""), (.name // "")] | @tsv')" || return 1
+  workflow_rows="$(gh api "repos/$repo/actions/workflows" --jq '.workflows[]? | [.id, (.path // ""), (.name // "")] | @tsv')" || return 1
 
   while IFS=$'\t' read -r id path name; do
     [[ -n "$id" ]] || continue
@@ -572,7 +578,7 @@ resolve_verify_workflow_id() {
     [[ -z "$verify_yaml_id" && "$lc_path" == ".github/workflows/verify.yaml" ]] && verify_yaml_id="$id"
     [[ -z "$verify_name_id" && "$lc_name" == "verify" ]] && verify_name_id="$id"
     [[ -z "$verify_path_id" && "$lc_path" == *"/verify."* ]] && verify_path_id="$id"
-  done <<< "$workflows"
+  done <<< "$workflow_rows"
 
   if [[ -n "$verify_yaml_id" ]]; then
     printf '%s\n' "$verify_yaml_id"
@@ -1315,11 +1321,20 @@ USAGE
     failed=1
   fi
 
+  echo "OK: doctor check=update_advice command=\"ci-self update\" reason=runner_and_dependency_update_check_available"
+
   if [[ "$failed" -eq 1 ]]; then
     echo "STATUS: ERROR"
     return 1
   fi
   echo "STATUS: OK"
+}
+
+cmd_update() {
+  (
+    cd "$ROOT_DIR"
+    CI_SELF_REPO="${CONFIG_REPO:-${CI_SELF_REPO:-}}" run_go_cmd run ./cmd/runner_update "$@"
+  )
 }
 
 cmd_config_init() {
@@ -1455,6 +1470,7 @@ default_remote_project_dir() {
   local name
   root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   name="$(basename "$root")"
+  # shellcheck disable=SC2088
   printf '%s\n' "~/dev/$name"
 }
 
@@ -1496,6 +1512,7 @@ ensure_default_local_dir_matches_repo() {
 
 remote_path_for_shell() {
   local path="$1"
+  # shellcheck disable=SC2088
   if [[ "$path" == "~/"* ]]; then
     # Emit a quoted path that expands $HOME on the remote side: cd "$HOME/..."
     printf '%s\n' "\"\$HOME/${path#"~/"}\""
@@ -1539,6 +1556,7 @@ run_remote_verify_wrapper() {
   [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
 
   remote_cd_q="$(remote_path_for_shell "$project_dir")"
+  # shellcheck disable=SC2016
   printf -v remote_script 'set -euo pipefail; cd %s; export REPO_DIR="$PWD" OUT_DIR="$PWD/out" VERIFY_DRY_RUN=%q VERIFY_GHA_SYNC=%q GITHUB_ACTIONS=%q' \
     "$remote_cd_q" "$verify_dry_run" "$verify_gha_sync" "true"
   if [[ -n "$github_sha" ]]; then
@@ -1564,6 +1582,7 @@ probe_remote_verify_artifacts() {
   [[ -n "$identity" ]] && ssh_cmd+=(-i "$identity")
 
   remote_cd_q="$(remote_path_for_shell "$project_dir")"
+  # shellcheck disable=SC2016
   printf -v remote_script 'set -euo pipefail; cd %s; if [[ -f out/verify-full.status ]]; then echo "OK: remote_artifacts status_file=$PWD/out/verify-full.status"; else echo "WARN: remote_artifacts status_file_missing=$PWD/out/verify-full.status"; fi; if [[ -d out/logs ]]; then echo "OK: remote_artifacts logs_dir=$PWD/out/logs"; else echo "WARN: remote_artifacts logs_dir_missing=$PWD/out/logs"; fi' \
     "$remote_cd_q"
   script_q="$(quote_bash_lc_script "$remote_script")"
@@ -1811,11 +1830,14 @@ run_remote_ci_self() {
 
   remote_args_q="$(quote_words "${remote_args[@]}")"
   remote_cli_q="$(remote_path_for_shell "$remote_cli")"
+  # shellcheck disable=SC2088
   if [[ "$project_dir" == "~/"* ]]; then
+    # shellcheck disable=SC2016
     printf -v remote_cd_q '$HOME/%s' "${project_dir#"~/"}"
   else
     printf -v remote_cd_q '%q' "$project_dir"
   fi
+  # shellcheck disable=SC2016
   printf -v remote_script 'set -euo pipefail; remote_cli=%s; if [[ "$remote_cli" != */* ]] && ! command -v "$remote_cli" >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/$remote_cli" ]]; then remote_cli="$HOME/.local/bin/$remote_cli"; fi; cd %s; "$remote_cli" %s' \
     "$remote_cli_q" "$remote_cd_q" "$remote_args_q"
   script_q="$(quote_bash_lc_script "$remote_script")"
@@ -2197,6 +2219,7 @@ main() {
     act) cmd_act "$@" ;;
     focus) cmd_focus "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    update) cmd_update "$@" ;;
     config-init) cmd_config_init "$@" ;;
     mobile-workflow) cmd_mobile_workflow "$@" ;;
     register) cmd_register "$@" ;;
