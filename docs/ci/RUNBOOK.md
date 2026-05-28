@@ -42,6 +42,7 @@ mkdir -p /Users/ci/ci-root/runner && cd /Users/ci/ci-root/runner
 - GitHub側: runner の Online/Offline 確認
 - Mac mini側: runner プロセス、ログ確認
 - まず: “再起動” より “ログ採取” を優先
+- バージョン差分確認: `ci-self update`（runner 本体は自動更新、周辺ツールは明示更新）
 
 ### 2) colima が不安定/遅い
 
@@ -53,6 +54,8 @@ mkdir -p /Users/ci/ci-root/runner && cd /Users/ci/ci-root/runner
 - 変更は小さく刻む（復旧しやすい）
 - Docker image はタグ運用（以前のタグに戻せる）
 - colima 設定値は docs/ci/COLIMA_TUNING.md に記録してから変更
+- `act` / `gh` / `colima` などは `ci-self update --apply` で明示更新する
+- runner 本体は GitHub Actions の自動更新に任せ、強制更新より監査を優先する
 
 ## 外部PR防止（セキュリティ）
 

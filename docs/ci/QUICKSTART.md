@@ -124,6 +124,7 @@ ci-self run-focus
 
 ```bash
 ci-self doctor --fix
+ci-self update
 ```
 
 確認項目:
@@ -132,6 +133,9 @@ ci-self doctor --fix
 - `gh auth status`
 - runner online（repo指定/設定時）
 - `runner_health`
+- runner / `act` / `gh` / `colima` などの更新候補（`ci-self update`）
+
+`ci-self update --apply` は、既に Homebrew 管理されている周辺ツールだけを明示更新します。runner 本体は GitHub Actions runner の自動更新に任せます。
 
 ## トラブル時
 

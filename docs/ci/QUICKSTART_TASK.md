@@ -5,7 +5,7 @@
 1. [x] `docs/ci/QUICKSTART_PLAN.md` を追加（本設計の SOT）
 2. [x] `docs/ci/QUICKSTART_TASK.md` を追加（実行順序固定）
 3. [x] `docs/ci/QUICKSTART.md` を追加（利用者向け1枚手順）
-4. [x] `docs/ci/RUNNER_LOCK.md` を追加（runner v2.331.0 + sha256 を固定）
+4. [x] `docs/ci/RUNNER_LOCK.md` を追加（runner v2.334.0 + sha256 を固定）
 5. [ ] `cmd/verify_lite_host/main.go` を追加
    - `out/verify-lite.status` が無い場合でも必ず生成（ERROR で）
    - 判定は `status=OK|ERROR|SKIP` と `ERROR:` 行

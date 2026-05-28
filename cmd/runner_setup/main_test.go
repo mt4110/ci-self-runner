@@ -39,7 +39,7 @@ func TestRunnerHashesConfigured(t *testing.T) {
 }
 
 func TestVerifySHA256RejectsMismatch(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "actions-runner-osx-arm64-2.321.0.tar.gz")
+	path := filepath.Join(t.TempDir(), "actions-runner-osx-arm64-"+runnerVersion+".tar.gz")
 	if err := os.WriteFile(path, []byte("not the runner tarball"), 0o644); err != nil {
 		t.Fatalf("write test tarball failed: %v", err)
 	}

@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	runnerVersion = "2.321.0"
+	runnerVersion = "2.334.0"
 	runnerBaseURL = "https://github.com/actions/runner/releases/download/v" + runnerVersion
 	statusOKMsg   = "STATUS: OK"
 	statusERRMsg  = "STATUS: ERROR"
@@ -27,8 +27,8 @@ const (
 // SHA256 hashes for runner tarballs (SOT: docs/ci/RUNNER_LOCK.md)
 // These should be updated when runner version is bumped.
 var runnerHashes = map[string]string{
-	"osx-x64":   "b2c91416b3e4d579ae69fc2c381fc50dbda13f1b3fcc283187e2c75d1b173072",
-	"osx-arm64": "fbee07e42a134645d4f04f8146b0a3d0b3c948f0d6b2b9fa61f4318c1192ff79",
+	"osx-x64":   "73a979ff7e9ce8a70244f3a959d896870be486fac92bb08ed90684f961474e0d",
+	"osx-arm64": "760899b29fd4e942076bcd1160a662bf83c15d9ce8a8cc466763aec7e582b21b",
 }
 
 var mobileProfileLabels = map[string][]string{
