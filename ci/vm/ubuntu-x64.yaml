@@ -1,0 +1,38 @@
+# Dedicated x86_64 kernel and userspace; no host filesystem mounts.
+minimumLimaVersion: 2.0.0
+vmType: qemu
+arch: x86_64
+images:
+  - location: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
+    arch: x86_64
+    digest: sha256:04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+cpus: 4
+memory: 8GiB
+disk: 64GiB
+mounts: []
+containerd:
+  system: false
+  user: false
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+user:
+  name: ci
+  uid: 1000
+  home: /home/ci
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update && apt-get install -y --no-install-recommends nix-bin nix-setup-systemd docker.io git ca-certificates time
+      test "$?" -eq 0 || exit 1
+      printf '\nexperimental-features = nix-command flakes\n' >> /etc/nix/nix.conf
+      usermod -aG docker,nix-users ci
+      systemctl enable --now nix-daemon.service docker.service
+probes:
+  - mode: readiness
+    description: x86_64 kernel, Nix and Docker
+    script: |
+      #!/bin/sh
+      test "$(uname -m)" = x86_64 && nix --version && sudo docker info >/dev/null

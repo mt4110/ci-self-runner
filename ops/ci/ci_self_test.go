@@ -91,6 +91,34 @@ func TestHelpListsRemoteCommands(t *testing.T) {
 	}
 }
 
+func TestSandboxPreservesCallerPathAndDoesNotRetryFailedWorkflow(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	writeFakeGH(t, bin, "#!/usr/bin/env bash\nexit 99\n")
+	for _, name := range []string{"go", "mise"} {
+		body := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%%s\\n' %q >> %q\nprintf '%%s\\n' \"$@\" >> %q\nexit 17\n", name, log, log)
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	caller := t.TempDir()
+	caller, err := filepath.EvalSymlinks(caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCiSelfInDirEnv(t, caller, []string{"PATH=" + bin + ":" + os.Getenv("PATH")}, "sandbox", "--plan")
+	if err == nil {
+		t.Fatalf("failure swallowed: %s", out)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "--project-dir\n"+caller+"\n") || strings.Contains(string(b), "mise") {
+		t.Fatalf("wrong dispatch or retried: %s", b)
+	}
+}
+
 func TestRemoteUpRequiresHost(t *testing.T) {
 	out, err := runCiSelf(t, "remote-up")
 	if err == nil {

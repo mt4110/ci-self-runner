@@ -87,7 +87,14 @@ func runGoOfficialChecks(ctx context.Context) error {
 		return errors.New("gofmt command not found")
 	}
 
-	unformatted, err := runCommandCapture(ctx, "gofmt", "-l", ".")
+	files, err := goFormattingFiles(ctx)
+	if err != nil {
+		return err
+	}
+	var unformatted string
+	if len(files) > 0 {
+		unformatted, err = runCommandCapture(ctx, "gofmt", append([]string{"-l", "--"}, files...)...)
+	}
 	if err != nil {
 		return fmt.Errorf("gofmt -l failed: %w", err)
 	}
@@ -104,6 +111,30 @@ func runGoOfficialChecks(ctx context.Context) error {
 	}
 	fmt.Println("OK: verify-lite go_checks done")
 	return nil
+}
+
+// Retained workflow snapshots can contain other projects' Go sources. Check
+// repository files, including new work, without formatting ignored evidence.
+func goFormattingFiles(ctx context.Context) ([]string, error) {
+	listed, err := runCommandCapture(ctx, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.go")
+	if err != nil {
+		return nil, fmt.Errorf("list Go formatting inputs: %w", err)
+	}
+	var files []string
+	seen := map[string]bool{}
+	for _, path := range strings.Split(listed, "\x00") {
+		if path == "" || seen[path] {
+			continue
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			continue // A tracked file deleted in the current worktree.
+		} else if err != nil {
+			return nil, err
+		}
+		seen[path] = true
+		files = append(files, path)
+	}
+	return files, nil
 }
 
 func runSecretPatternScan() error {
