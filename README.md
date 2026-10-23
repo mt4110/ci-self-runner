@@ -2,6 +2,130 @@
 
 macOS 向けの self-hosted runner 運用キットです。
 
+開発・テストには、依存ツールを `flake.lock` で固定できる **Nix環境を推奨**します。
+本体の検証は `nix develop -c ci-self-test`、対象プロジェクトのworkflow実行は
+`nix develop` 内から `sandbox --project-dir ...` を使います。
+この推奨は本体と実行ツールの環境をそろえるためのものです。対象プロジェクトの依存関係は
+元のworkflowに従い、workflowがNixを呼ぶ場合にだけNixで固定されます。
+
+**ネイティブx86_64 Linux実機では未検証です。** 現在の実行実績はARM64 Mac上の開発シェル、
+ARM64 Linux上の `postal_converter_ja` の `launcher` ジョブ、および命令変換を使うx86_64 Ubuntu VMでの同ジョブです。
+`launcher` は `actions/setup-go` を使い、対象のNixジョブ全体の成功を示すものではありません。
+VMでのNixジョブは長時間ビルドを中断しており、未完了です。
+ARM64での結果は日常の事前チェックに使い、x86_64向けの最終確認はGitHub Actionsで行ってください。
+
+## パスで指定したプロジェクトをUbuntu＋Nix内でCIテストする
+
+`sandbox` は、対象のGitチェックアウトから作業コピーを作り、元のworkflowを
+`act` でUbuntu＋Nixコンテナ内に実行します。プロジェクト専用の設定生成は不要です。
+
+```bash
+cd ~/dev/ci-self-runner
+nix develop
+
+# workflowが複数ある場合は選択を明示する
+ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.yml --list
+ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.yml --job test --plan
+ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.yml --job test
+```
+
+`ci-self` が未導入なら、上の `ci-self` を `bash ops/ci/ci_self.sh` に置き換えられます。
+実行にはDockerデーモン（macOSならColimaなど）が必要です。既存サービスを自動再起動しません。
+既定ColimaのUnixソケットだけが不通でVMへSSH接続できる場合は、同じVMへの一時的なSSH転送を実行中だけ使います。
+グローバルのDocker設定は変更しません。明示した `DOCKER_HOST` が不通の場合は自動代替しません。
+`--plan` はファイルを作成せず互換性とイメージの対応を表示し、`--list` はジョブを表示します。
+`--event` の既定は `push`。workflowが1つなら `--workflow` は省略できます。
+
+- 対象は任意のGitリポジトリのルート。追跡済みファイルの現在の内容と、Gitに無視されていない未追跡ファイルをコピーします。削除済みファイルは復活させません。
+- Git履歴もコピーしますが、元のGit設定・フックは引き継ぎません。`.env` / `.env.*`（`.env.example`以外）、`.secrets`、`.vars`、`.input`、`.actrc` はコピーせず、除外名を記録します。履歴内の秘密情報や、別名で保存された秘密情報を検出する機能ではありません。
+- 作業コピーをコンテナへコピーし、元のプロジェクトはマウントしません。checkoutステップにはactのローカルコピー動作を使うため、未コミット変更をリモートHEADで上書きしません。
+- workflowのコマンドは変更しません。Nixはコンテナ内で利用可能です。対象の `flake.nix` による依存固定は、workflow内の `nix develop` 等で利用します。非Nixのworkflowを自動でNixへ変換する機能ではありません。
+- 既定の対応はUbuntu 22.04 / 24.04 / `ubuntu-latest`（24.04へ対応）。CPUは `linux/amd64`。`--arch linux/arm64` も選べますがx64とは別条件です。静的な `matrix.os` の展開と `needs` を確認します。matrixのexclude前の候補も保守的に検査します。
+- macOS / Windows / 未知のself-hosted label、動的runner、再利用workflow、jobの `container:`、submoduleは自動代替せず停止します。`--job` を指定すれば、そのジョブと依存ジョブを検査・実行します。
+- `--platform LABEL=BASE_IMAGE` でLinuxベースイメージを明示変更できます。例: `--platform ubuntu-24.04=ghcr.io/catthehacker/ubuntu:full-24.04`。full系は収録ツールを増やせますが、大きなダウンロードとディスク容量が必要です。VMの完全再現にはなりません。
+
+結果は既定でユーザーキャッシュの `ci-self-runner/sandbox/run-*/` に保存します。
+`--out /path/to/results` で変更できます（対象プロジェクトの外側を指定）。
+`result.json` に実際のイメージdigest / ID、actのバージョン、ジョブの結果、失敗段階を記録し、
+`run.log` と `artifacts/`、作業コピーも残します。全ジョブがスキップされた場合は非ゼロ終了します。
+実行記録・作業コピー・永続キャッシュは自動削除せず、結果を自動公開しません。
+actによる通常の成功時コンテナ削除は継続し、失敗・中断後に残った当該実行のコンテナは停止して保持します。
+
+GitHubの権限、OIDC、environment承認、concurrency、VMのカーネルや常駐サービスは完全には再現できません。
+このARM64 MacのColimaでは、x86_64エミュレーション内の `nix develop` はseccompエラーになります。
+CPU差は警告・記録し、安全機構を無効化しません。x64のNixビルドにはx64のDocker実行先を使ってください。
+actがjobのtimeoutを強制しないため、全体に `--timeout 45m`（変更可能）を適用します。
+ホストの認証情報は自動注入せず、必要な場合だけ `--secret-file` / `--var-file` / `--event-file` を指定します。
+既定のevent payloadには `act: true` を含めます。独自eventファイルはそのまま使用します。
+ネットワークは有効で、artifact用のact HTTPサーバーも実行中に起動します。
+Dockerソケットは既定で渡しません。Docker操作が必要な信頼済みworkflowだけ、ホストを操作できることを理解して `--docker-socket` を指定してください。
+
+## ARM Macで日常の事前チェックを速く回す
+
+既存のARM64 Colimaを使う場合は、CPU構成を明示します。Dockerの設定変更はそのコマンド内だけです。
+
+```bash
+nix develop
+env -u DOCKER_HOST DOCKER_CONTEXT=colima bash ops/ci/ci_self.sh sandbox \
+  --project-dir /path/to/project --workflow .github/workflows/ci.yml \
+  --job test --arch linux/arm64 --timeout 10m
+```
+
+`--project-dir` とworkflow・ジョブを対象に合わせて変更できます。既定のCPUは引き続きx64です。
+ARM64は事前チェックであり、GitHubのx64 runnerと同じ条件の合否には扱いません。
+`postal_converter_ja` の元の `launcher` ジョブは、このMacで初回約51秒、再実行約11秒で成功しました。
+[実行条件・計測結果](docs/ci/SANDBOX.md#native-arm64-preflight-on-this-mac) を参照してください。
+
+## このMacでx86_64 Ubuntu VMを使う
+
+ARM Macでもx64のLinuxカーネルを動かす専用VMを追加できます。既存Colimaとは別のLimaインスタンスです。
+
+```bash
+nix develop .#vm
+ci-self vm start
+ci-self sandbox --vm ci-self-x64 --nix-cache --project-dir /path/to/project --workflow .github/workflows/ci.yml --job test
+ci-self vm status
+ci-self vm stop
+```
+
+準備済みのこのMacではそのまま利用できます。VM構成、初期導入の前提、実測結果は
+[x86_64 VMの実行手順](docs/ci/X64_VM.md) を参照してください。
+`--nix-cache` はVM内にプロジェクト別のNixストア・評価キャッシュを残し、次のジョブで再利用します。VMはジョブ終了後も起動したままです。
+CPUの命令変換には時間がかかります。GitHub Actionsの完全再現や同等速度を保証しません。
+
+## このプロジェクトをNixで開発・テストする
+
+Nix（`nix-command` / `flakes` 有効）が導入済みなら、このチェックアウトで実行できます。
+
+```bash
+cd ~/dev/ci-self-runner
+nix develop -c ci-self-test
+```
+
+`flake.lock` で固定したNixpkgsからGo 1.25系・Bash・Git・act・Docker CLIを用意し、
+`gofmt` の確認、`go vet ./...`、`go test ./...` を順に実行します。
+失敗した段階で非ゼロ終了します。初回は依存の取得が必要です。
+
+対話的に開発する場合:
+
+```bash
+nix develop
+go version
+ci-self-test
+# 個別テストも実行可能
+go test ./ops/ci -run TestActHelp -v
+```
+
+プロジェクトは今の作業ディレクトリをそのまま使い、未コミット変更もテスト対象です。
+新規の `flake.nix` / `flake.lock` が未追跡の間は、Gitの入力対象外になります。
+`git add -N flake.nix flake.lock` で新規ファイルの存在をGitへ登録すると利用できます（コミットは不要）。
+通常のGoキャッシュを再利用し、Goのツールチェーン自動取得は無効にしています。
+
+これはホストOS上の開発環境です。VM・コンテナによる隔離やLinuxの再現ではありません。
+対応定義はmacOS / LinuxのARM64・x86_64向けですが、実行確認済みの環境はmacOS ARM64です。
+`ci-self-test` の単体テストにはSSH・GitHub・Docker等のモックを含みます。
+実際のrunner登録・リモート接続・Docker / Colima起動の確認とは別です。
+
 ## 最短導線
 
 最初の1回だけ:

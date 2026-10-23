@@ -1,5 +1,87 @@
 # runner-kit (self-hosted runner + colima + docker)
 
+**Nix is recommended for development and testing** to pin the controller tools
+through `flake.lock`. Run `nix develop -c ci-self-test` to check this repository,
+or run `sandbox --project-dir ...` from `nix develop` to execute a target workflow.
+The target's dependencies remain controlled by its original workflow; they are
+Nix-pinned only when that workflow invokes Nix.
+
+**Native x86_64 Linux hardware has not been tested.** Runtime evidence covers
+the ARM64 macOS development shell, Postal Converter's `launcher` job on ARM64
+Linux, and the same job in an emulated x86_64 Ubuntu VM. That job uses
+`actions/setup-go`; it does not validate the target's complete Nix job. The VM's
+Nix job was interrupted during a long build and remains incomplete. Use ARM64
+for daily preflight and GitHub Actions for final x86_64 validation.
+
+## Test a project by path in Ubuntu + Nix
+
+```bash
+cd ~/dev/ci-self-runner
+nix develop
+ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.yml --list
+ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.yml --job test --plan
+ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.yml --job test
+```
+
+This copies the current Git worktree into act-managed Ubuntu + Nix containers,
+including uncommitted changes. The original project is not mounted or modified.
+Workflows control their own dependency setup; Nix is available without rewriting
+their commands. A reachable Docker Engine is required. See
+[the execution contract and limitations](docs/ci/SANDBOX.md).
+
+## Native ARM64 preflight on an Apple Silicon Mac
+
+With an existing ARM64 Colima instance:
+
+```bash
+nix develop
+env -u DOCKER_HOST DOCKER_CONTEXT=colima bash ops/ci/ci_self.sh sandbox \
+  --project-dir /path/to/project --workflow .github/workflows/ci.yml \
+  --job test --arch linux/arm64 --timeout 10m
+```
+
+Project path, workflow and job remain generic parameters. The default architecture
+is still x64; ARM64 is an explicit preflight choice, with final x64 acceptance on
+GitHub Actions. The unchanged Postal Converter launcher job passed in about 51 s
+first / 11 s repeat on this Mac. See [measurement conditions](docs/ci/SANDBOX.md#native-arm64-preflight-on-this-mac).
+
+## Use a full x86_64 Ubuntu VM on this Mac
+
+```bash
+nix develop .#vm
+ci-self vm start
+ci-self sandbox --vm ci-self-x64 --nix-cache --project-dir /path/to/project --workflow .github/workflows/ci.yml --job test
+ci-self vm status
+ci-self vm stop
+```
+
+The dedicated Lima VM runs an x64 kernel, independently of Colima.
+`--nix-cache` persists a project-specific Nix store/evaluation cache inside the
+VM. The VM stays running after the workflow. See
+[setup, measured results and limitations](docs/ci/X64_VM.md). CPU emulation has
+an overhead; this does not promise hosted Actions parity or equal performance.
+
+## Develop and test this project with Nix
+
+With Nix installed and `nix-command` / `flakes` enabled, run from the checkout root:
+
+```bash
+nix develop -c ci-self-test
+```
+
+The lock file pins Nixpkgs, providing Go 1.25, Bash, Git, act, and Docker CLI. `ci-self-test`
+checks formatting, runs `go vet ./...`, then `go test ./...`, stopping on failure.
+The first run downloads dependencies. For an interactive shell, use `nix develop`.
+The current working tree, including uncommitted changes, is tested in place.
+While the new flake files are untracked, register their existence using
+`git add -N flake.nix flake.lock` so Nix can see them (no commit required).
+Go's normal caches are reused; automatic toolchain downloads are disabled.
+
+This is a host development shell, not VM/container isolation or Linux emulation.
+Definitions cover ARM64/x86_64 macOS and Linux; runtime verification covers ARM64
+macOS only. Unit tests include mocks for SSH, GitHub, and Docker and do not verify
+live runner registration, remote connections, or Docker/Colima operation.
+
 `runner-kit` is a macOS-oriented toolkit for operating a self-hosted GitHub Actions runner with Colima and Docker.
 
 ## Quick Start

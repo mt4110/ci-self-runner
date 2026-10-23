@@ -1,11 +1,53 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestFormattingChecksRepositorySourcesButPreservesIgnoredSnapshots(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	for path, content := range map[string]string{
+		".gitignore":  "out/\n",
+		"tracked.go":  "package main\nfunc tracked( ) {}\n",
+		"new file.go": "package main\nfunc added( ) {}\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "tracked.go"}} {
+		if b, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %v: %s", err, b)
+		}
+	}
+	if err := os.MkdirAll("out/run/project", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := []byte("package main\nfunc snapshot( ) {}\n")
+	if err := os.WriteFile("out/run/project/foreign.go", snapshot, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := goFormattingFiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("formatting inputs: %v", files)
+	}
+	out, err := runCommandCapture(ctx, "gofmt", append([]string{"-l", "--"}, files...)...)
+	if err != nil || !strings.Contains(out, "tracked.go") || !strings.Contains(out, "new file.go") || strings.Contains(out, "foreign.go") {
+		t.Fatalf("formatting missed source or included evidence: %q %v", out, err)
+	}
+	if b, err := os.ReadFile("out/run/project/foreign.go"); err != nil || string(b) != string(snapshot) {
+		t.Fatal("snapshot changed")
+	}
+}
 
 func TestIsMobileSensitivePath(t *testing.T) {
 	for _, path := range []string{

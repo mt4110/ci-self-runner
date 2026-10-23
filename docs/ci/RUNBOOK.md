@@ -176,3 +176,5 @@ mise install
 - 必要に応じて `HOST_UID` / `HOST_GID` を明示指定できる
 - 通常実行で Docker daemon が未接続の場合、`ops/ci/run_verify_full.sh` は `colima start` で回復を試みる
 - 通常実行で Docker/Colima が回復できない場合も `out/verify-full.status` に `status=ERROR` と理由を残す
+
+- Shell例外（x64 VM）: `ci/vm/ubuntu-x64.yaml` のprovision/probeはLima初期導入時のapt・systemd・疎通確認だけに限定する。Go実行環境導入前の短いOS準備であり、VM操作・workflow判定・証拠生成は `cmd/vm` / `cmd/sandbox` が担う。

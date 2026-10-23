@@ -196,6 +196,8 @@ Usage:
 Commands:
   up         One-command local register + run-focus
   act        Run selected workflow/job locally via act for rough timing
+  sandbox    Copy a project and run its workflow in Ubuntu + Nix containers
+  vm         Start, inspect, stop or enter the dedicated x86_64 Ubuntu VM
   focus      run-focus + optional PR auto-create
   doctor     Dependency/runner checks (with optional --fix)
   update     Check runner/dependency updates, optionally upgrade brew-managed tools
@@ -2217,6 +2219,8 @@ main() {
   case "$cmd" in
     up) cmd_up "$@" ;;
     act) cmd_act "$@" ;;
+    sandbox) (project="$PWD"; cd "$ROOT_DIR" && env -u GOROOT -u GOTOOLDIR -u GOENV CI_SELF_CALLER_DIR="$project" go run ./cmd/sandbox --project-dir "$project" "$@") ;;
+    vm) (cd "$ROOT_DIR" && env -u GOROOT -u GOTOOLDIR -u GOENV go run ./cmd/vm "$@") ;;
     focus) cmd_focus "$@" ;;
     doctor) cmd_doctor "$@" ;;
     update) cmd_update "$@" ;;
