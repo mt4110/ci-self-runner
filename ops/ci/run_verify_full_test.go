@@ -81,9 +81,21 @@ exit 99
 
 func TestRunVerifyFullWritesSpecificStatusWhenDockerCommandMissing(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "out")
+	// /usr/bin contains Docker on many Linux hosts. Build a minimal PATH
+	// instead of assuming that a system directory cannot contain it.
+	binDir := t.TempDir()
+	for _, name := range []string{"id", "mkdir", "rm", "date"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(binDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	out, err := runVerifyFullWithEnv(t, []string{
-		"PATH=/usr/bin:/bin",
+		"PATH=" + binDir,
 		"OUT_DIR=" + outDir,
 	})
 	if err == nil {

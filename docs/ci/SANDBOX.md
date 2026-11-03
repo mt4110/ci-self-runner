@@ -15,7 +15,14 @@ ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.y
 Without an installed `ci-self` symlink, use `bash ops/ci/ci_self.sh` instead.
 For the dedicated full-system x64 VM use `--vm ci-self-x64`; see
 [the VM runbook](X64_VM.md).
+For a native Linux machine, use Docker Engine directly; see
+[native setup, storage checks, and measured scope](NATIVE_LINUX.md).
 Docker Engine must be reachable; the command does not restart host services.
+Before making a snapshot or pulling images, it checks for existing `act-` named
+containers on that engine, including stopped containers and other users' act
+jobs. If any remain it returns their IDs without changing them. act 0.2.88 uses
+deterministic job names and may otherwise remove a previous failed container at
+startup. Inspect retained evidence before explicitly approving any cleanup.
 For a stale default Colima Unix socket, it can open a process-scoped SSH forward
 to that same running local VM using `colima ssh-config`. The forward ends when
 the command returns. Global Docker settings are unchanged; explicit `DOCKER_HOST`
@@ -100,9 +107,13 @@ outside this measurement. No project-specific runner configuration was added.
   are not scanned or sanitized. External symlinks and submodules fail explicitly.
 - Images: pull the selected Ubuntu base and official Nix image, resolve immutable
   digests, build a derived image from those digests, record its ID. Copy only
-  the Nix runtime closure, fetched from the signed official binary cache. Nix retains
-  the official container configuration, using a single-user store. This does not
-  provide an additional Nix build sandbox inside Docker.
+  the Nix runtime closure, fetched from the signed official binary cache. Workflow
+  commands run as root, but Nix builders use a dedicated unprivileged `nixbld` group.
+  This does not provide an additional Nix build sandbox inside Docker; syscall
+  filtering and signed-cache verification remain enabled. Job containers use
+  Docker's init process to reap orphaned children, including Node cluster workers.
+  Workflow tests of the runner user's own permissions outside Nix still differ
+  from GitHub's unprivileged hosted runner user.
 - Workflow: pass the original YAML to act. Use copy mode, never a source bind
   mount or a forced remote checkout. No automatic host secrets or `.actrc`.
   Original setup actions and commands remain in control of project dependencies.
@@ -169,11 +180,15 @@ binaries with an older store. Moving a project path creates a different cache.
 The normal CLI snapshot and workflow remain unchanged.
 
 Docker initializes an empty store volume from the job image on first attachment;
-subsequent job containers reuse the store. These are single-user root stores,
-separate from the VM host's daemon store. Do not run GC while jobs use them.
+subsequent job containers reuse the store. The job's root Nix process manages
+the store with unprivileged build users; it is separate from the VM host's daemon
+store. The recipe change receives a separate cache key so an older root-build
+store cannot hide the new store permissions. Do not run GC while jobs use them.
 Project cache data is mutable, workflow-controlled local state: only reuse it
-for trusted workflows from that project. Host-controller file locking prevents
-concurrent cache writers on this Mac. A running-container check also rejects
+for trusted workflows from that project. A per-user controller file lock prevents
+concurrent cache writers for the same user on the same host. Controllers on other
+hosts or under different users do not share that lock; serialize those runs.
+A running-container check also rejects
 reuse of a cache left mounted after an interrupted run. `result.json` records
 volume names and cache setup timing. No automatic cache or evidence pruning.
 
@@ -190,7 +205,11 @@ exact run label, including after cancellation. Stopped IDs are recorded in
 approving deletion, inspect the exact container ID, stopped state, run label,
 and mounts; retain named Nix/action caches and local logs/snapshots. Use no
 engine-wide prune and no implicit VM shutdown/deletion. act's existing normal
-successful-job cleanup is unchanged.
+successful-job cleanup is unchanged. After a failure, the next invocation is
+blocked by the existing-container guard until the retained act resources have
+been inspected and any required cleanup explicitly authorized. Run controllers
+serially when sharing an engine: this preflight is not a cross-controller atomic
+scheduler and cannot protect against unrelated tools racing its inventory check.
 
 `--timeout` defaults to 45 minutes across setup and workflow execution, because
 act does not enforce `job.timeout-minutes`. Cancellation sends an interrupt to

@@ -573,7 +573,9 @@ func actArgs(o options, p executionPlan, workspace, control, artifacts string) [
 		"--secret-file", filepath.Join(control, "empty"), "--var-file", filepath.Join(control, "empty"),
 		"--eventpath", filepath.Join(control, "event.json"), "--pull=false", "--concurrent-jobs", "1",
 		"--use-gitignore=false", "--json", "--artifact-server-path", artifacts}
-	var containerOptions []string
+	// Reap orphaned children (e.g. Node cluster workers) instead of leaving
+	// zombies under act's tail PID 1, which makes process-exit checks hang.
+	containerOptions := []string{"--init"}
 	if o.runID != "" {
 		containerOptions = append(containerOptions, "--label=ci-self.run="+o.runID)
 	}
@@ -677,6 +679,9 @@ func run(ctx context.Context, args []string) (retErr error) {
 	defer disconnect()
 	if !strings.HasPrefix(dockerPlatform, "linux/") {
 		return errors.New("sandbox requires a Linux Docker engine")
+	}
+	if err := guardActContainers(ctx, dockerHost); err != nil {
+		return err
 	}
 	normalized := strings.NewReplacer("aarch64", "arm64", "x86_64", "amd64").Replace(dockerPlatform)
 	if normalized != o.arch {

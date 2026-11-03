@@ -43,7 +43,7 @@ func connectDocker(ctx context.Context, vm string) (host, platform string, disco
 	if err == nil {
 		return
 	}
-	failure := errors.New("Docker daemon unreachable; start Docker/Colima or set DOCKER_HOST (no automatic service restart)")
+	failure := errors.New("Docker daemon unreachable or access denied; check the Docker service, socket access, and selected context/DOCKER_HOST (no automatic service restart)")
 	if explicit || !strings.HasPrefix(host, "unix://") || !strings.HasSuffix(host, "/.colima/default/docker.sock") {
 		err = failure
 		return
