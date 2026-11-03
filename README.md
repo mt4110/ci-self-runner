@@ -1,6 +1,6 @@
 # runner-kit (self-hosted runner + colima + docker)
 
-macOS 向けの self-hosted runner 運用キットです。
+macOS向けのself-hosted runner運用キットと、macOS / Linuxで使うローカルworkflow検証ツールです。
 
 開発・テストには、依存ツールを `flake.lock` で固定できる **Nix環境を推奨**します。
 本体の検証は `nix develop -c ci-self-test`、対象プロジェクトのworkflow実行は
@@ -8,11 +8,16 @@ macOS 向けの self-hosted runner 運用キットです。
 この推奨は本体と実行ツールの環境をそろえるためのものです。対象プロジェクトの依存関係は
 元のworkflowに従い、workflowがNixを呼ぶ場合にだけNixで固定されます。
 
-**ネイティブx86_64 Linux実機では未検証です。** 現在の実行実績はARM64 Mac上の開発シェル、
-ARM64 Linux上の `postal_converter_ja` の `launcher` ジョブ、および命令変換を使うx86_64 Ubuntu VMでの同ジョブです。
-`launcher` は `actions/setup-go` を使い、対象のNixジョブ全体の成功を示すものではありません。
+**ネイティブx86_64 Ubuntuで本体チェック・launcher・Nixセキュリティジョブを実行確認しました。**
+実行実績はARM64 Mac上の開発シェル、ARM64 Linux上の `postal_converter_ja` の `launcher` ジョブ、
+ネイティブx86_64 Ubuntuと命令変換を使うx86_64 Ubuntu VMでの同ジョブです。
+`launcher` は `actions/setup-go` を使います。別途、元の `nix-node-security` ジョブも完走し、
+初回42分57秒・キャッシュ再利用時15.83秒でした（本体起動前の導入時間は含まず、再実行は成功済みチェック成果物を再利用）。
 VMでのNixジョブは長時間ビルドを中断しており、未完了です。
 ARM64での結果は日常の事前チェックに使い、x86_64向けの最終確認はGitHub Actionsで行ってください。
+
+Linux実機にはDocker Engineを直接使えます。Colimaや追加VMは不要です。
+[ネイティブLinuxの準備・実行・計測条件](docs/ci/NATIVE_LINUX.md) を参照してください。
 
 ## パスで指定したプロジェクトをUbuntu＋Nix内でCIテストする
 
@@ -50,6 +55,8 @@ ci-self sandbox --project-dir /path/to/project --workflow .github/workflows/ci.y
 `run.log` と `artifacts/`、作業コピーも残します。全ジョブがスキップされた場合は非ゼロ終了します。
 実行記録・作業コピー・永続キャッシュは自動削除せず、結果を自動公開しません。
 actによる通常の成功時コンテナ削除は継続し、失敗・中断後に残った当該実行のコンテナは停止して保持します。
+既存の `act-` コンテナがある場合は次の実行を開始前に拒否し、IDを表示します。
+actが前回の失敗データや別のact実行を同名コンテナとして削除・再利用することを防ぎます。
 
 GitHubの権限、OIDC、environment承認、concurrency、VMのカーネルや常駐サービスは完全には再現できません。
 このARM64 MacのColimaでは、x86_64エミュレーション内の `nix develop` はseccompエラーになります。
@@ -122,7 +129,7 @@ go test ./ops/ci -run TestActHelp -v
 通常のGoキャッシュを再利用し、Goのツールチェーン自動取得は無効にしています。
 
 これはホストOS上の開発環境です。VM・コンテナによる隔離やLinuxの再現ではありません。
-対応定義はmacOS / LinuxのARM64・x86_64向けですが、実行確認済みの環境はmacOS ARM64です。
+対応定義はmacOS / LinuxのARM64・x86_64向けで、本体チェックの実行確認済み環境はmacOS ARM64とUbuntu x86_64です。
 `ci-self-test` の単体テストにはSSH・GitHub・Docker等のモックを含みます。
 実際のrunner登録・リモート接続・Docker / Colima起動の確認とは別です。
 

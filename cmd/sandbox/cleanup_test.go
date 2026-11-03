@@ -45,3 +45,33 @@ func TestCleanupStopsOnlyRunLabelAfterCancellationWithoutDeleting(t *testing.T) 
 		}
 	}
 }
+
+func TestActGuardPreservesPriorContainersWithoutMutatingEngine(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	t.Setenv("GUARD_LOG", log)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GUARD_LOG\"\nprintf '%s' \"$GUARD_ROWS\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rows := range []string{"old-id\tact-CI-failed\n", "running-id\tact-other-workflow\n"} {
+		t.Setenv("GUARD_ROWS", rows)
+		if err := guardActContainers(context.Background(), "unix:///test.sock"); err == nil || !strings.Contains(err.Error(), strings.Split(rows, "\t")[0]) {
+			t.Fatalf("retained act container not reported: %v", err)
+		}
+	}
+	t.Setenv("GUARD_ROWS", "database-id\tpostgres\nfixture-id\tcleanup-fixture\n")
+	if err := guardActContainers(context.Background(), "unix:///test.sock"); err != nil {
+		t.Fatalf("unrelated services blocked: %v", err)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if !strings.Contains(line, "ps --all --no-trunc") || strings.Contains(line, "stop") || strings.Contains(line, " rm ") {
+			t.Fatalf("guard mutated engine: %s", line)
+		}
+	}
+}

@@ -6,12 +6,18 @@ or run `sandbox --project-dir ...` from `nix develop` to execute a target workfl
 The target's dependencies remain controlled by its original workflow; they are
 Nix-pinned only when that workflow invokes Nix.
 
-**Native x86_64 Linux hardware has not been tested.** Runtime evidence covers
-the ARM64 macOS development shell, Postal Converter's `launcher` job on ARM64
-Linux, and the same job in an emulated x86_64 Ubuntu VM. That job uses
-`actions/setup-go`; it does not validate the target's complete Nix job. The VM's
+**Controller checks, launcher and the original Nix security job passed on native x86_64 Ubuntu.**
+Runtime evidence covers the ARM64 macOS development shell, Postal Converter's
+`launcher` job on ARM64 Linux, and the same job on native x86_64 Ubuntu and in
+an emulated x86_64 Ubuntu VM. That job uses
+`actions/setup-go`. Separately, the original `nix-node-security` job completed in
+42 min 57 s initially / 15.83 s with its persistent cache, excluding provisioning
+and controller startup. The repeat reused successful Nix check outputs. The VM's
 Nix job was interrupted during a long build and remains incomplete. Use ARM64
 for daily preflight and GitHub Actions for final x86_64 validation.
+
+Native Linux uses Docker Engine directly; Colima and another VM are unnecessary.
+See [native Linux setup and measurement conditions](docs/ci/NATIVE_LINUX.md).
 
 ## Test a project by path in Ubuntu + Nix
 
@@ -28,6 +34,9 @@ including uncommitted changes. The original project is not mounted or modified.
 Workflows control their own dependency setup; Nix is available without rewriting
 their commands. A reachable Docker Engine is required. See
 [the execution contract and limitations](docs/ci/SANDBOX.md).
+Existing `act-` containers, including stopped ones, block a new sandbox run with
+their IDs shown. This prevents act from silently removing or reusing a previous
+failed job or another act job. Inspect evidence before authorizing cleanup.
 
 ## Native ARM64 preflight on an Apple Silicon Mac
 
@@ -78,11 +87,12 @@ While the new flake files are untracked, register their existence using
 Go's normal caches are reused; automatic toolchain downloads are disabled.
 
 This is a host development shell, not VM/container isolation or Linux emulation.
-Definitions cover ARM64/x86_64 macOS and Linux; runtime verification covers ARM64
-macOS only. Unit tests include mocks for SSH, GitHub, and Docker and do not verify
+Definitions cover ARM64/x86_64 macOS and Linux; controller checks have passed on
+ARM64 macOS and x86_64 Ubuntu. Unit tests include mocks for SSH, GitHub, and Docker and do not verify
 live runner registration, remote connections, or Docker/Colima operation.
 
-`runner-kit` is a macOS-oriented toolkit for operating a self-hosted GitHub Actions runner with Colima and Docker.
+`runner-kit` combines macOS self-hosted runner operations with a local workflow
+sandbox for macOS and Linux. Linux sandbox execution uses Docker Engine directly.
 
 ## Quick Start
 

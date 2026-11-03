@@ -240,7 +240,7 @@ func TestActArgumentsKeepLocalChangesAndDoNotMountHost(t *testing.T) {
 			t.Fatalf("unsafe argument %s", args)
 		}
 	}
-	for _, want := range []string{"--container-daemon-socket -", "--secret-file /control/empty", "ubuntu-24.04=test-image", "--cache-server-path /cache/actcache"} {
+	for _, want := range []string{"--container-daemon-socket -", "--secret-file /control/empty", "ubuntu-24.04=test-image", "--cache-server-path /cache/actcache", "--container-options --init"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("missing %s: %s", want, args)
 		}
