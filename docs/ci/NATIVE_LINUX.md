@@ -8,7 +8,7 @@ act, Bash, Git, and Docker CLI; it does not install or start a Docker daemon.
 
 | Controller host | Current runtime evidence | Job execution choice |
 | --- | --- | --- |
-| macOS ARM64 | Controller checks passed | ARM64 Colima for ARM preflight; a separate x64 engine for x64 checks |
+| macOS ARM64 | Controller checks and updated-image ARM64 launcher/builder/init regression passed | ARM64 Colima for ARM preflight; a separate x64 engine for x64 checks |
 | Ubuntu x86_64 | Controller checks, original launcher and Nix security job passed | Local native Docker Engine, no extra VM |
 | macOS x86_64 | Flake evaluation only | Runtime not measured |
 | Linux ARM64 | Flake evaluation only for the controller | ARM64 job execution was measured in Colima with a Mac controller |
@@ -264,8 +264,53 @@ no per-project configuration was generated. This case did not opt into a Nix
 store cache. Evidence: `launcher-space-path.log`.
 
 This validates the controller and the selected launcher/Nix jobs on this native
-host. Frontend, API, DB integration, releases/deployments, updated-image ARM64
-runtime, Windows, and hosted GitHub Actions parity are outside these results.
+host. Frontend, API, DB integration, releases/deployments, Windows, and hosted
+GitHub Actions parity are outside these results.
+
+## Updated-image ARM64 regression (2026-11-03 JST)
+
+The initially stopped default Colima was started with authorization. Its existing
+three failed act containers caused the new guard to reject execution; they were
+preserved. Regression tests then used a separate Colima profile,
+`ci-self-arm64-regression`, VZ / aarch64 / 4 CPUs / 8 GiB configured RAM (Docker
+reported 8,308,297,728 bytes). It was created with `--activate=false`, leaving the
+existing Docker context selected. The original six running database/search
+container IDs/names were equal before and after the tests.
+
+The updated ARM64 image ran the original Postal Converter launcher twice at the
+same source HEAD. Both returned `OK`:
+
+| Sandbox monotonic measurement | First | Repeat |
+| --- | ---: | ---: |
+| Internal total | 124.60 s | 11.75 s |
+| Image preparation | 100.74 s | 3.56 s |
+| Workflow including cleanup | 22.89 s | 7.38 s |
+
+VM provisioning and controller startup are excluded. The first run downloaded
+images into the new engine, while host action caches already existed; the repeat
+reused image layers/toolchain. This is a different VM configuration from the
+earlier 6-CPU/12-GiB ARM baseline, so timings are not a controlled comparison of
+the code change.
+
+Image inspection confirmed `Architecture=arm64`. The same image successfully
+built `ci/nix/build-user-smoke.nix`: UID 999 was nonzero and directory write denial
+was enforced. The opt-in reaper integration test passed against this native ARM
+engine, verified an orphan was reaped, and retained its stopped fixture. Inspection
+of the actual act job confirmed `init=true`, `build-users-group=nixbld`,
+`filter-syscalls=true`, and `require-sigs=true`.
+
+Results: `run-1796001797` / `run-2353212863`. Local evidence is under
+`out/arm64-regression-20261103/`: `measurements.json`, launcher logs,
+`build-user-smoke.log`, `reaper.log`, and `actual-job-runtime.log`.
+No running containers remained on the test engine. The dedicated VM was stopped
+after verification; its disk, caches, and stopped probe fixtures were retained.
+The default Colima remained running and its old failed act containers were not
+removed. No engine-wide cleanup was performed.
+
+This closes the ARM64 regression for the changed launcher image, Nix build-user
+permissions, and init behavior. It does not execute the whole application CI on
+ARM64: the target's security workflow explicitly requests an x86_64 Nix check,
+whose complete build and repeat were validated on the native Ubuntu host above.
 
 Implementation references:
 [act 0.2.88 job naming and lifecycle](https://github.com/nektos/act/blob/v0.2.88/pkg/runner/run_context.go),

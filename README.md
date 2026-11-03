@@ -82,6 +82,8 @@ env -u DOCKER_HOST DOCKER_CONTEXT=colima bash ops/ci/ci_self.sh sandbox \
 ARM64は事前チェックであり、GitHubのx64 runnerと同じ条件の合否には扱いません。
 `postal_converter_ja` の元の `launcher` ジョブは、このMacで初回約51秒、再実行約11秒で成功しました。
 [実行条件・計測結果](docs/ci/SANDBOX.md#native-arm64-preflight-on-this-mac) を参照してください。
+更新後イメージでも、専用ARM64環境でlauncher・Nix非rootビルダー・initの回帰確認が成功しています。
+[更新後の検証条件](docs/ci/NATIVE_LINUX.md#updated-image-arm64-regression-2026-11-03-jst) に旧環境との違いを記載しています。
 
 ## このMacでx86_64 Ubuntu VMを使う
 

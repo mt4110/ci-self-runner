@@ -53,6 +53,8 @@ Project path, workflow and job remain generic parameters. The default architectu
 is still x64; ARM64 is an explicit preflight choice, with final x64 acceptance on
 GitHub Actions. The unchanged Postal Converter launcher job passed in about 51 s
 first / 11 s repeat on this Mac. See [measurement conditions](docs/ci/SANDBOX.md#native-arm64-preflight-on-this-mac).
+The updated image also passed launcher, unprivileged Nix-builder and init
+regression checks on a dedicated ARM64 engine; see [updated conditions](docs/ci/NATIVE_LINUX.md#updated-image-arm64-regression-2026-11-03-jst).
 
 ## Use a full x86_64 Ubuntu VM on this Mac
 
